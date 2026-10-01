@@ -1,14 +1,26 @@
+"""Database connection (SQLite by default) and session handling."""
 from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
-import os
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./autoresolve.db")
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-Base = declarative_base()
+from backend.config import DATABASE_URL
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+_is_sqlite = DATABASE_URL.startswith("sqlite")
+engine = create_engine(
+    DATABASE_URL,
+    # Background fix runs use their own threads; wait on locks instead of erroring.
+    connect_args={"check_same_thread": False, "timeout": 30} if _is_sqlite else {},
+    pool_pre_ping=not _is_sqlite,
+)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
 
 def get_db():
+    """FastAPI dependency: one session per request."""
     db = SessionLocal()
     try:
         yield db

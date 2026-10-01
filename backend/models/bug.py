@@ -1,56 +1,60 @@
-from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
-from sqlalchemy.orm import relationship
+"""The Bug table. One row holds a bug's whole lifecycle."""
+from datetime import datetime, timezone
+from typing import Optional
+
+from sqlalchemy import JSON, DateTime, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+
 from backend.database.session import Base
+
+# The four statuses a bug moves through.
+FIXING = "fixing"                    # the AI agent is working on it
+AWAITING_REVIEW = "awaiting_review"  # a fix is ready for the developer
+MERGED = "merged"                    # approved and merged
+FAILED = "failed"                    # iteration limit reached, or the AI hit an error
+STATUSES = (FIXING, AWAITING_REVIEW, MERGED, FAILED)
+
+
+def utcnow() -> datetime:
+    """Naive UTC, which is what SQLite round-trips cleanly."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 class Bug(Base):
     __tablename__ = "bugs"
-    id = Column(Integer, primary_key=True)
-    title = Column(String(300), nullable=False)
-    description = Column(Text, nullable=False)
-    repository = Column(String(500), nullable=False)
-    reporter = Column(String(200), nullable=False)
-    status = Column(String(50), default="NEW", nullable=False)
-    current_iteration = Column(Integer, default=0)
-    root_cause = Column(Text, default="")
-    relevant_files = Column(Text, default="[]")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    resolved_at = Column(DateTime, nullable=True)
-    iterations = relationship("Iteration", back_populates="bug", cascade="all, delete-orphan")
-    feedback = relationship("Feedback", back_populates="bug", cascade="all, delete-orphan")
-    events = relationship("AuditEvent", back_populates="bug", cascade="all, delete-orphan")
 
-class Iteration(Base):
-    __tablename__ = "iterations"
-    id = Column(Integer, primary_key=True)
-    bug_id = Column(Integer, ForeignKey("bugs.id"), nullable=False)
-    iteration_number = Column(Integer, nullable=False)
-    analysis = Column(Text, default="{}")
-    repair_plan = Column(Text, default="[]")
-    patch = Column(Text, default="")
-    tests = Column(Text, default="{}")
-    validation = Column(Text, default="{}")
-    status = Column(String(50), default="CREATED")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    bug = relationship("Bug", back_populates="iterations")
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(300))
+    description: Mapped[str] = mapped_column(Text)
+    repo: Mapped[str] = mapped_column(String(500))
+    reporter: Mapped[str] = mapped_column(String(200), default="unknown")
+    status: Mapped[str] = mapped_column(String(20), default=FIXING, index=True)
 
-class Feedback(Base):
-    __tablename__ = "feedback"
-    id = Column(Integer, primary_key=True)
-    bug_id = Column(Integer, ForeignKey("bugs.id"), nullable=False)
-    iteration_id = Column(Integer, ForeignKey("iterations.id"), nullable=True)
-    developer = Column(String(200), default="developer")
-    feedback = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    bug = relationship("Bug", back_populates="feedback")
+    # Number of AI attempts started so far (1 = the first attempt).
+    iteration: Mapped[int] = mapped_column(Integer, default=1)
 
-class AuditEvent(Base):
-    __tablename__ = "audit_events"
-    id = Column(Integer, primary_key=True)
-    bug_id = Column(Integer, ForeignKey("bugs.id"), nullable=False)
-    event_type = Column(String(100), nullable=False)
-    message = Column(Text, default="")
-    metadata_json = Column(Text, default="{}")
-    timestamp = Column(DateTime, default=datetime.utcnow)
-    bug = relationship("Bug", back_populates="events")
+    # The latest attempt, denormalised so the review panel needs no joins.
+    root_cause: Mapped[str] = mapped_column(Text, default="")
+    changed_files: Mapped[list] = mapped_column(JSON, default=list)  # [{"path", "diff"}]
+    test_results: Mapped[dict] = mapped_column(JSON, default=dict)
+    branch: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+
+    # Every attempt, newest last, so earlier fixes stay visible after a retry.
+    attempts: Mapped[list] = mapped_column(JSON, default=list)
+    # Timeline of what happened: [{"at", "event", "iteration", "message"}]
+    history: Mapped[list] = mapped_column(JSON, default=list)
+    # Developer change requests: [{"iteration", "text", "at"}]
+    feedback: Mapped[list] = mapped_column(JSON, default=list)
+
+    # Where the bug came from ("api" or "sheet"). source_ref is unique, so a
+    # sheet row can never be imported twice.
+    source: Mapped[str] = mapped_column(String(20), default="api")
+    source_ref: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, unique=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def public_id(self) -> str:
+        return f"BUG-{self.id}"

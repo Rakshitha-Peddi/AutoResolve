@@ -1,1 +1,1 @@
-from .bug import Bug, Iteration, Feedback, AuditEvent
+from backend.models.bug import Bug  # noqa: F401
