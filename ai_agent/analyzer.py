@@ -61,6 +61,7 @@ Return ONLY valid JSON:
 
         text = response.output_text.strip()
 
+
         try:
             result = json.loads(text)
         except json.JSONDecodeError as exc:
@@ -68,6 +69,65 @@ Return ONLY valid JSON:
                 "AI analyzer returned invalid JSON."
             ) from exc
 
+        if not isinstance(result, dict):
+            raise RuntimeError(
+                "AI analyzer returned an invalid response structure."
+            )
+
+        required_fields = {
+            "root_cause": str,
+            "relevant_files": list,
+            "confidence": str,
+            "evidence": list,
+        }
+
+        for field, expected_type in required_fields.items():
+            if field not in result or not isinstance(
+                result[field], expected_type
+            ):
+                raise RuntimeError(
+                    f"AI analyzer returned an invalid '{field}' field."
+                )
+
+        if not result["root_cause"].strip():
+            raise RuntimeError(
+                "AI analyzer returned an empty root cause."
+            )
+
+        if not all(
+            isinstance(path, str) and path.strip()
+            for path in result["relevant_files"]
+        ):
+            raise RuntimeError(
+                "AI analyzer returned invalid relevant files."
+            )
+
+        if not result["evidence"] or not all(
+            isinstance(item, str) and item.strip()
+            for item in result["evidence"]
+        ):
+            raise RuntimeError(
+                "AI analyzer returned invalid evidence."
+            )
+        retrieved_paths = {
+            path for _, path, _ in context
+        }
+
+        unsupported_files = [
+            path for path in result["relevant_files"]
+            if path not in retrieved_paths
+        ]
+
+        if unsupported_files:
+            raise RuntimeError(
+                "AI analyzer referenced files that were not retrieved."
+            )
+        if result["confidence"] not in {
+            "low", "medium", "high"
+        }:
+            raise RuntimeError(
+                "AI analyzer returned an invalid confidence level."
+            )
         result["context"] = [
             (path, content)
             for _, path, content in context

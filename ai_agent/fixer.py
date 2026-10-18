@@ -70,6 +70,7 @@ Return ONLY valid JSON in this exact shape:
 
         text = response.output_text.strip()
 
+
         try:
             result = json.loads(text)
         except json.JSONDecodeError as exc:
@@ -77,14 +78,51 @@ Return ONLY valid JSON in this exact shape:
                 "AI fixer returned invalid JSON."
             ) from exc
 
-        patch = result.get("patch", "").strip()
+        if not isinstance(result, dict):
+            raise RuntimeError(
+                "AI fixer returned an invalid response structure."
+            )
+
+        for field in ("summary", "root_cause", "patch"):
+            if (
+                not isinstance(result.get(field), str)
+                or not result[field].strip()
+            ):
+                raise RuntimeError(
+                    f"AI fixer returned an invalid '{field}' field."
+                )
+
+        patch = result["patch"].strip()
 
         if not patch:
             raise RuntimeError(
                 "AI fixer returned an empty patch."
             )
 
+
+        import re
+
         if "--- " not in patch or "+++ " not in patch:
+            raise RuntimeError(
+                "AI fixer did not return a valid unified diff."
+            )
+
+        if not re.search(
+            r"(?m)^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@",
+            patch,
+        ):
+            raise RuntimeError(
+                "AI fixer did not return a valid unified diff."
+            )
+
+        diff_lines = patch.splitlines()
+        if not any(
+            line.startswith("+") and not line.startswith("+++")
+            for line in diff_lines
+        ) or not any(
+            line.startswith("-") and not line.startswith("---")
+            for line in diff_lines
+        ):
             raise RuntimeError(
                 "AI fixer did not return a valid unified diff."
             )

@@ -14,6 +14,16 @@ def report(client, **over):
     return r.json()["id"]
 
 
+def test_health_endpoint(client):
+    response = client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+
+
+
 def test_report_runs_ai_and_waits_for_review(client):
     bug_id = report(client)
     assert bug_id.startswith("BUG-")
@@ -39,6 +49,10 @@ def test_validation_and_not_found(client):
     assert client.get("/api/bugs/BUG-9999").status_code == 404
     assert client.get("/api/bugs/nonsense").status_code == 404
     assert client.get("/api/bugs?status=bogus").status_code == 422
+    assert client.post(
+        "/api/bugs/BUG-9999/feedback",
+        json={"feedback": "Please fix this"},
+    ).status_code == 404
 
 
 def test_approve_merges_and_notifies(client):
@@ -83,30 +97,74 @@ def test_feedback_must_not_be_blank(client):
     bug_id = report(client)
     assert client.post(f"/api/bugs/{bug_id}/feedback", json={"feedback": "   "}).status_code == 422
 
+def test_input_length_limits(client):
+    # Oversized bug descriptions must be rejected.
+    response = client.post(
+        "/api/bugs",
+        json={
+            **BUG,
+            "description": "d" * 20001,
+        },
+    )
+    assert response.status_code == 422
 
-def test_engine_error_marks_failed(client):
+    # Oversized feedback must also be rejected.
+    bug_id = report(client)
+    response = client.post(
+        f"/api/bugs/{bug_id}/feedback",
+        json={"feedback": "x" * 5001},
+    )
+    assert response.status_code == 422
+
+
+
+def test_engine_error_marks_failed(client, caplog):
     class Boom(StubEngine):
         def propose_fix(self, request):
-            raise RuntimeError("model unavailable")
+            raise RuntimeError("private diagnostic detail")
+
     set_engine(Boom())
     bug = client.get(f"/api/bugs/{report(client)}").json()
+
     assert bug["status"] == "failed"
-    assert "model unavailable" in bug["history"][-1]["message"]
+    assert (
+        bug["history"][-1]["message"]
+        == "Repair attempt failed. Check server logs for details."
+    )
+    assert "private diagnostic detail" in caplog.text
 
 
-def test_merge_error_keeps_bug_awaiting_review(client):
+
+def test_merge_error_keeps_bug_awaiting_review(client, caplog):
     class BadMerge(StubEngine):
         def merge(self, repo, branch):
-            raise RuntimeError("conflict")
+            raise RuntimeError("private merge diagnostic")
+
     bug_id = report(client)
     set_engine(BadMerge())
-    r = client.post(f"/api/bugs/{bug_id}/approve")
-    assert r.status_code == 502 and "conflict" in r.json()["detail"]
+
+    response = client.post(f"/api/bugs/{bug_id}/approve")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == (
+        "Merge failed. Check server logs for details."
+    )
+    assert "private merge diagnostic" not in response.text
+    assert "private merge diagnostic" in caplog.text
+
     bug = client.get(f"/api/bugs/{bug_id}").json()
     assert bug["status"] == "awaiting_review"
     assert bug["history"][-1]["event"] == "merge_failed"
+    assert bug["history"][-1]["message"] == (
+        "Merge failed. Check server logs for details."
+    )
+
     set_engine(StubEngine())
-    assert client.post(f"/api/bugs/{bug_id}/approve").json()["status"] == "merged"
+    assert (
+        client.post(f"/api/bugs/{bug_id}/approve").json()["status"]
+        == "merged"
+    )
+
 
 
 def test_cannot_act_on_a_bug_that_is_not_awaiting_review(client):

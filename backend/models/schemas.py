@@ -20,7 +20,7 @@ def iso(dt: Optional[datetime]) -> Optional[str]:
 
 class BugCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
-    description: str = Field(min_length=1)
+    description: str = Field(min_length=1, max_length=20000)
     # "repository" is accepted too, so either spelling works from a client.
     repo: str = Field(min_length=1, max_length=500,
                       validation_alias=AliasChoices("repo", "repository"))
@@ -36,7 +36,11 @@ class BugCreate(BaseModel):
 
 
 class FeedbackCreate(BaseModel):
-    feedback: str = Field(min_length=1, validation_alias=AliasChoices("feedback", "text", "message"))
+    feedback: str = Field(
+    min_length=1,
+    max_length=5000,
+    validation_alias=AliasChoices("feedback", "text", "message"),
+)
 
     @field_validator("feedback")
     @classmethod

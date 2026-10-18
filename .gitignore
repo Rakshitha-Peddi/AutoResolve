@@ -13,3 +13,5 @@ node_modules/
 dist/
 build/
 credentials/
+credentials.zip
+AutoResolve_NEW.zip

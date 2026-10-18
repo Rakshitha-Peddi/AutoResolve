@@ -6,6 +6,8 @@ generation, validation and merge mechanics.
 
 from __future__ import annotations
 
+import logging
+
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -23,6 +25,7 @@ from backend.models.bug import (
 from backend.models.schemas import BugCreate, Metrics
 from backend.orchestrator.engine import FixRequest, get_engine
 
+log = logging.getLogger(__name__)
 
 class BugNotFound(Exception):
     """Requested bug does not exist."""
@@ -214,13 +217,19 @@ def run_iteration(bug_id: int) -> Bug:
 
             return bug
 
-        except Exception as exc:
+        except Exception:
+            log.exception(
+                "Repair attempt failed for BUG-%s at iteration %s",
+                bug.id,
+                bug.iteration,
+            )
+
             bug.status = FAILED
 
             _add_history(
                 bug,
                 "failed",
-                str(exc),
+                "Repair attempt failed. Check server logs for details.",
             )
 
             db.commit()
@@ -251,18 +260,21 @@ def approve(db: Session, bug: Bug) -> Bug:
             bug.branch,
         )
 
-    except Exception as exc:
-        # A merge failure must NOT destroy a valid review candidate.
+    except Exception:
+        log.exception("Merge failed for BUG-%s", bug.public_id)
+
         _add_history(
             bug,
             "merge_failed",
-            str(exc),
+            "Merge failed. Check server logs for details.",
         )
 
         db.commit()
         db.refresh(bug)
 
-        raise MergeFailed(str(exc)) from exc
+        raise MergeFailed(
+            "Merge failed. Check server logs for details."
+                        )
 
     latest["outcome"] = "approved"
 

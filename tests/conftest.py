@@ -7,6 +7,8 @@ from pathlib import Path
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mkdtemp()}/test.db"
 os.environ["MAX_ITERATIONS"] = "3"
 os.environ["GOOGLE_SHEET_ID"] = ""
+os.environ["GOOGLE_SHEET_URL"] = ""
+os.environ["AUTORESOLVE_REAL_ENGINE"] = "false"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest  # noqa: E402
