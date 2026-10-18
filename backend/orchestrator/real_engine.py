@@ -7,6 +7,7 @@ applies the generated source patch and regression test, then runs pytest.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -317,8 +318,13 @@ class RealFixEngine(FixEngine):
             }
 
         output = result.stdout + "\n" + result.stderr
-        failed_test = (
-            " failed" in output or " failed," in output
+        # Require pytest's actual failure summary, not arbitrary
+        # diagnostic text that happens to contain the word "failed".
+        failed_test = bool(
+            re.search(
+                r"(?m)^\s*\d+\s+failed(?:,|\s|$)",
+                output,
+            )
         )
         collection_error = (
             "ERROR collecting" in output

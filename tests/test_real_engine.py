@@ -466,3 +466,76 @@ def test_validate_patch_does_not_modify_file_through_external_symlink(
     assert result["passed"] is False
     assert result["stage"] == "patch"
     assert outside_file.read_text() == "original content\n"
+
+
+def test_regression_gate_accepts_pytest_failure_summary(
+    monkeypatch,
+    tmp_path,
+):
+    import subprocess
+
+    from backend.orchestrator import real_engine
+
+    repo = tmp_path / "repo"
+    tests_dir = repo / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_regression.py").write_text(
+        "def test_regression():\n    assert False\n"
+    )
+
+    monkeypatch.setattr(
+        real_engine,
+        "run_pytest_in_worker",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["pytest"],
+            returncode=1,
+            stdout="F                                                                        [100%]\n"
+                   "1 failed in 0.03s\n",
+            stderr="",
+        ),
+    )
+
+    engine = object.__new__(RealFixEngine)
+    result = engine._verify_regression_test_before_fix(
+        repo,
+        "tests/test_regression.py",
+    )
+
+    assert result["passed"] is True
+    assert result["stage"] == "regression_test_before_fix"
+
+
+def test_regression_gate_rejects_unrelated_failed_text(
+    monkeypatch,
+    tmp_path,
+):
+    import subprocess
+
+    from backend.orchestrator import real_engine
+
+    repo = tmp_path / "repo"
+    tests_dir = repo / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_regression.py").write_text(
+        "def test_regression():\n    assert False\n"
+    )
+
+    monkeypatch.setattr(
+        real_engine,
+        "run_pytest_in_worker",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["pytest"],
+            returncode=1,
+            stdout="A setup operation failed unexpectedly.\n",
+            stderr="",
+        ),
+    )
+
+    engine = object.__new__(RealFixEngine)
+    result = engine._verify_regression_test_before_fix(
+        repo,
+        "tests/test_regression.py",
+    )
+
+    assert result["passed"] is False
+    assert result["stage"] == "regression_test_before_fix"
