@@ -55,13 +55,13 @@ def run_pytest_in_worker(
         "--cpus", "0.5",
         "--user", f"{os.getuid()}:{os.getgid()}",
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
-        "--mount", f"type=bind,src={repo_root},dst=/workspace",
+        "--mount", f"type=bind,src={repo_root},dst=/workspace,readonly",
         "--workdir", "/workspace",
         "--env", "PYTHONDONTWRITEBYTECODE=1",
         "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
         "--entrypoint", "python",
         WORKER_IMAGE,
-        "-m", "pytest", "-q",
+        "-m", "pytest", "-q", "-p", "no:cacheprovider",
     ]
 
     if test_args:

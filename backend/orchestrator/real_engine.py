@@ -77,7 +77,12 @@ class RealFixEngine(FixEngine):
             askpass.unlink(missing_ok=True)
 
     def propose_fix(self, request: FixRequest) -> FixResult:
-        workspace_base = Path.home() / ".autoresolve-workspaces"
+        workspace_base = Path(
+            os.getenv(
+                "AUTORESOLVE_WORKSPACE_DIR",
+                str(Path.home() / ".autoresolve-workspaces"),
+            )
+        )
         workspace_base.mkdir(mode=0o700, parents=True, exist_ok=True)
 
         with tempfile.TemporaryDirectory(

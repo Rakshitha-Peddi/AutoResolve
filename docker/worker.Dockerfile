@@ -4,8 +4,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-RUN pip install --no-cache-dir "pytest>=8,<9"
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
 
 WORKDIR /workspace
+
+COPY requirements.txt /tmp/autoresolve-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/autoresolve-requirements.txt
 
 ENTRYPOINT ["python", "-m", "pytest"]

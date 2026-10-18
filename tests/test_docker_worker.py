@@ -60,6 +60,12 @@ def test_worker_requests_restricted_docker_settings(tmp_path, monkeypatch):
     assert "--cpus" in command
     assert "--user" in command
     assert "--mount" in command
+    mount_value = command[command.index("--mount") + 1]
+    assert "dst=/workspace,readonly" in mount_value
+
+    assert command[-5:] == [
+        "-m", "pytest", "-q", "-p", "no:cacheprovider"
+    ]
 
     assert captured["kwargs"]["stdout"] == subprocess.PIPE
     assert captured["kwargs"]["stderr"] == subprocess.PIPE
