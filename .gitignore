@@ -13,3 +13,8 @@ node_modules/
 dist/
 build/
 credentials/
+credentials.zip
+AutoResolve_NEW.zip
+
+# AutoResolve temporary Docker test workspaces
+/.autoresolve-test-workspaces/

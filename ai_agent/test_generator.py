@@ -62,12 +62,20 @@ Return ONLY valid JSON:
                 "AI test generator returned invalid JSON."
             ) from exc
 
+        if not isinstance(result, dict):
+            raise RuntimeError(
+                "AI test generator returned an invalid response structure."
+            )
+
+
         required = ("framework", "path", "summary", "code")
 
         for field in required:
-            if not result.get(field):
+            value = result.get(field)
+
+            if not isinstance(value, str) or not value.strip():
                 raise RuntimeError(
-                    f"AI test generator returned no '{field}'."
+                    f"AI test generator returned an invalid '{field}' field."
                 )
 
         return result
