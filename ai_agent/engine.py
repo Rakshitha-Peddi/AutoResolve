@@ -50,6 +50,7 @@ class CodeFixEngine:
         tests = self.test_generator.generate(
             bug,
             feedback,
+            analysis.get("context", []),
         )
 
         return {

@@ -42,7 +42,13 @@ def _configure_engine() -> None:
 
     from backend.orchestrator.real_engine import RealFixEngine
 
-    set_engine(RealFixEngine())
+    try:
+        set_engine(RealFixEngine())
+    except ValueError as exc:
+        raise RuntimeError(
+            f"AUTORESOLVE_REAL_ENGINE is on but setup is incomplete: {exc} "
+            "Fill in your .env file (see .env.example) and run: python check_setup.py"
+        ) from exc
     log.info("AutoResolve using RealFixEngine")
 
 @asynccontextmanager

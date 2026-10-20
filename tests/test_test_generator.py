@@ -8,17 +8,15 @@ from ai_agent.test_generator import RegressionTestGenerator
 
 
 def run_generator_with_response(response_text):
-    fake_response = Mock()
-    fake_response.output_text = response_text
+    fake_response = response_text
 
-    with patch("ai_agent.test_generator.OpenAI") as mock_openai:
-        mock_client = mock_openai.return_value
-        mock_client.responses.create.return_value = fake_response
+    with patch("ai_agent.test_generator.generate_text") as mock_openai:
+        mock_generate = mock_openai
+        mock_generate.return_value = fake_response
 
         generator = RegressionTestGenerator.__new__(
             RegressionTestGenerator
         )
-        generator.client = mock_client
         generator.model = "test-model"
 
         class Bug:

@@ -18,9 +18,14 @@ Tester -> FastAPI/SQLite -> Code Fix Agent -> Isolated Execution -> Developer Re
 
 ## Current implementation
 
-This MVP is fully runnable without external API keys. The AI analysis and Git PR are deterministic/local implementations so the complete lifecycle can be demonstrated. The interfaces are separated so real LLM, Docker, GitHub and Google Sheets adapters can be added later.
+Without configuration the app runs a deterministic demo engine (no keys needed). With `AUTORESOLVE_REAL_ENGINE=true` it uses OpenAI to analyse and fix bugs in a GitHub repo, validates in a Docker sandbox, opens a Pull Request, and merges it only after human approval (`AUTORESOLVE_ENABLE_MERGE=true`).
 
-## Run
+## Real setup
+
+See **SETUP.md** for the full step-by-step task list, `.env.example` for settings and
+`python check_setup.py` to verify your setup.
+
+## Run (demo mode)
 
 ```bash
 python3 -m venv .venv

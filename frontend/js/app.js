@@ -76,6 +76,15 @@ async function refresh() {
             });
         });
 
+        if (selected) {
+            try {
+                const current = await api("/bugs/" + encodeURIComponent(selected.id));
+                const changed = JSON.stringify(current) !== JSON.stringify(selected);
+                selected = current;
+                if (changed) render();
+            } catch (_) { /* keep showing the last known state */ }
+        }
+
         document.getElementById("metrics").innerHTML = `
             <div class="metric"><b>Total Bugs</b><br>${metrics.total}</div>
             <div class="metric"><b>Resolved</b><br>${metrics.merged}/${metrics.total}</div>
@@ -108,7 +117,7 @@ function render() {
     const latest = attempts.length ? attempts[attempts.length - 1] : null;
     const changedFiles = bug.changed_files || [];
     const history = bug.history || [];
-    const feedback = bug.feedback || [];
+    const feedbackItems = bug.feedback || [];
     const testResults = bug.test_results || {};
 
     const plan = latest?.plan;
@@ -162,8 +171,8 @@ function render() {
         ${actionsHtml}
 
         <h4>Feedback</h4>
-        ${feedback.length
-            ? `<ul>${feedback.map(item => `<li>${escapeHtml(item.at || "")}: ${escapeHtml(item.text || "")}</li>`).join("")}</ul>`
+        ${feedbackItems.length
+            ? `<ul>${feedbackItems.map(item => `<li>${escapeHtml(item.at || "")}: ${escapeHtml(item.text || "")}</li>`).join("")}</ul>`
             : "<p>No feedback recorded.</p>"}
 
         <h4>History</h4>
@@ -197,6 +206,13 @@ async function action(path) {
 }
 
 async function approve() {
+    if (!selected) return;
+
+    const confirmed = window.confirm(
+        "Are you sure you want to approve and merge this repair?"
+    );
+    if (!confirmed) return;
+
     await action("/approve");
 }
 

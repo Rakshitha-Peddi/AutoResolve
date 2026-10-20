@@ -12,9 +12,25 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from github import Github
+
 from ai_agent.engine import CodeFixEngine
 from backend.orchestrator.engine import FixEngine, FixRequest, FixResult
 from backend.orchestrator.docker_worker import run_pytest_in_worker
+
+
+def _merge_enabled() -> bool:
+    """Pushing branches / merging is opt-in so a first run cannot touch GitHub."""
+    return os.getenv("AUTORESOLVE_ENABLE_MERGE", "false").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _publish_enabled() -> bool:
+    """Publishing a validated branch and PR is separate from merging."""
+    return os.getenv("AUTORESOLVE_ENABLE_PUBLISH", "false").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 
 class RealFixEngine(FixEngine):
@@ -171,19 +187,27 @@ class RealFixEngine(FixEngine):
 
             changed_files.append(test_file)
 
+            branch = f"autoresolve/{request.bug_id.lower()}"
+            summary = (
+                f"Attempt {request.iteration}: "
+                "automated repair proposed and validated."
+            )
+
+            if _publish_enabled():
+                branch, pr_url = self._publish_branch(
+                    repo_path,
+                    request,
+                    analysis["root_cause"],
+                )
+                summary += f" Pull request opened: {pr_url}"
+
             return FixResult(
                 root_cause=analysis["root_cause"],
-                summary=(
-                    f"Attempt {request.iteration}: "
-                    "automated repair proposed and validated."
-                ),
+                summary=summary,
                 plan=result["plan"],
                 changed_files=changed_files,
                 test_results=test_results,
-                branch=(
-                    f"autoresolve/"
-                    f"{request.bug_id.lower()}"
-                ),
+                branch=branch,
             )
 
     def _patch_to_changed_files(
@@ -369,6 +393,7 @@ class RealFixEngine(FixEngine):
                 [
                     "git",
                     "apply",
+                    "--recount",
                     "--whitespace=nowarn",
                     "-",
                 ],
@@ -442,12 +467,115 @@ class RealFixEngine(FixEngine):
             "stderr": test_result.stderr[-12000:],
         }
 
+    # ------------------------------------------------------------------
+    # Publishing and merging (needs a GitHub token with write access)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _repo_slug(repo: str) -> str:
+        """'owner/repo' from either 'owner/repo' or a GitHub URL."""
+        if repo.startswith(("http://", "https://")):
+            from backend.orchestrator.github_client import GitHubClient
+
+            return GitHubClient.parse_repo_url(repo)
+        return repo.strip().removesuffix(".git")
+
+    def _publish_branch(
+        self,
+        repo_path: Path,
+        request: FixRequest,
+        root_cause: str,
+    ) -> tuple[str, str]:
+        """Commit the validated change, push a branch and open a pull request.
+
+        Nothing is merged here. The merge happens only after the developer
+        presses "Approve & Merge" (see merge()).
+        """
+        slug = self._repo_slug(request.repo)
+        branch = f"autoresolve/{request.bug_id.lower()}-attempt-{request.iteration}"
+
+        askpass = repo_path.parent / "git-askpass-push.sh"
+        askpass.write_text(
+            "#!/bin/sh\n"
+            'case "$1" in\n'
+            '  *Username*) echo "x-access-token" ;;\n'
+            '  *Password*) echo "$GITHUB_TOKEN" ;;\n'
+            "esac\n"
+        )
+        askpass.chmod(0o700)
+
+        env = os.environ.copy()
+        env["GIT_ASKPASS"] = str(askpass)
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        env["GITHUB_TOKEN"] = self.github_token
+
+        def git(*args: str) -> None:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=repo_path,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"git {args[0]} failed: {result.stderr.strip()[-500:]}"
+                )
+
+        try:
+            git("checkout", "-b", branch)
+            git("add", "-A")
+            git(
+                "-c", "user.name=AutoResolve",
+                "-c", "user.email=autoresolve@users.noreply.github.com",
+                "commit", "-m",
+                f"AutoResolve: {request.bug_id} {request.title}"[:200],
+            )
+            git("push", "origin", branch)
+        finally:
+            askpass.unlink(missing_ok=True)
+
+        gh_repo = Github(self.github_token).get_repo(slug)
+        pull = gh_repo.create_pull(
+            title=f"AutoResolve {request.bug_id}: {request.title}"[:250],
+            body=(
+                f"Automated fix proposed by AutoResolve for {request.bug_id}.\n\n"
+                f"**Root cause:** {root_cause}\n\n"
+                "The regression test failed before the fix and the full test "
+                "suite passed after it. A human must approve before merge."
+            ),
+            head=branch,
+            base=gh_repo.default_branch,
+        )
+        return branch, pull.html_url
+
     def merge(
         self,
         repo: str,
         branch: str | None,
     ) -> str | None:
-        raise RuntimeError(
-            "GitHub merge is not enabled yet. "
-            "The current GitHub token is read-only."
+        """Merge the pull request for an approved fix and return its URL."""
+        if not _merge_enabled():
+            raise RuntimeError(
+                "Merging is switched off. Set AUTORESOLVE_ENABLE_MERGE=true "
+                "in .env (and use a GitHub token with write access)."
+            )
+        if not branch:
+            raise RuntimeError("This fix has no branch to merge.")
+
+        gh_repo = Github(self.github_token).get_repo(self._repo_slug(repo))
+        pulls = list(
+            gh_repo.get_pulls(
+                state="open",
+                head=f"{gh_repo.owner.login}:{branch}",
+            )
         )
+        if not pulls:
+            raise RuntimeError(f"No open pull request found for branch '{branch}'.")
+
+        pull = pulls[0]
+        outcome = pull.merge(merge_method="squash")
+        if not outcome.merged:
+            raise RuntimeError(f"GitHub refused the merge: {outcome.message}")
+        return pull.html_url

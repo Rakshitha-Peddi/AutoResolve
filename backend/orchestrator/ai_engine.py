@@ -65,7 +65,7 @@ Return ONLY valid JSON using exactly this structure:
 """
 
         response = self.client.responses.create(
-            model="gpt-5.6",
+            model=os.getenv("OPENAI_MODEL", "gpt-5.6"),
             input=prompt,
         )
 

@@ -217,9 +217,22 @@ def run_pytest_in_worker(
             text = "[Earlier output truncated; showing final output only.]\n" + text
         return text
 
+    stdout_text = decode_output("stdout")
+    stderr_text = decode_output("stderr")
+
+    # pytest itself only exits with 0-5. 125/126/127 come from Docker: the
+    # daemon is not running, the image is missing, or the command was not found.
+    # Without this check that looks like "the test failed", which is misleading.
+    if returncode in (125, 126, 127):
+        raise RuntimeError(
+            "Docker could not start the test worker "
+            f"(exit {returncode}). Is Docker running and is the image "
+            f"'{WORKER_IMAGE}' built? Details: {stderr_text.strip()[-500:]}"
+        )
+
     return subprocess.CompletedProcess(
         command,
         returncode,
-        decode_output("stdout"),
-        decode_output("stderr"),
+        stdout_text,
+        stderr_text,
     )
