@@ -9,8 +9,7 @@ from ai_agent.analyzer import Analyzer
 
 
 def test_analyzer_returns_root_cause_and_source_evidence():
-    fake_response = Mock()
-    fake_response.output_text = json.dumps(
+    fake_response = json.dumps(
         {
             "root_cause": "find_user returns None when the user is missing.",
             "relevant_files": ["user_service.py"],
@@ -32,12 +31,11 @@ def test_analyzer_returns_root_cause_and_source_evidence():
         )
     ]
 
-    with patch("ai_agent.analyzer.OpenAI") as mock_openai:
-        mock_client = mock_openai.return_value
-        mock_client.responses.create.return_value = fake_response
+    with patch("ai_agent.analyzer.generate_text") as mock_openai:
+        mock_generate = mock_openai
+        mock_generate.return_value = fake_response
 
         analyzer = Analyzer.__new__(Analyzer)
-        analyzer.client = mock_client
         analyzer.model = "test-model"
 
         result = analyzer.analyze(
@@ -55,22 +53,20 @@ def test_analyzer_returns_root_cause_and_source_evidence():
         ("user_service.py", context[0][2])
     ]
 
-    prompt = mock_client.responses.create.call_args.kwargs["input"]
+    prompt = mock_generate.call_args.args[0]
     assert "user_service.py" in prompt
     assert "database_lookup" in prompt
-    mock_client.responses.create.assert_called_once()
+    mock_generate.assert_called_once()
 
 
 def test_analyzer_rejects_invalid_json():
-    fake_response = Mock()
-    fake_response.output_text = "This is not JSON"
+    fake_response = "This is not JSON"
 
-    with patch("ai_agent.analyzer.OpenAI") as mock_openai:
-        mock_client = mock_openai.return_value
-        mock_client.responses.create.return_value = fake_response
+    with patch("ai_agent.analyzer.generate_text") as mock_openai:
+        mock_generate = mock_openai
+        mock_generate.return_value = fake_response
 
         analyzer = Analyzer.__new__(Analyzer)
-        analyzer.client = mock_client
         analyzer.model = "test-model"
 
         with pytest.raises(
@@ -115,15 +111,13 @@ def test_analyzer_rejects_invalid_json():
 def test_analyzer_validates_response_fields(
     response_text, expected_error
 ):
-    fake_response = Mock()
-    fake_response.output_text = response_text
+    fake_response = response_text
 
-    with patch("ai_agent.analyzer.OpenAI") as mock_openai:
-        mock_client = mock_openai.return_value
-        mock_client.responses.create.return_value = fake_response
+    with patch("ai_agent.analyzer.generate_text") as mock_openai:
+        mock_generate = mock_openai
+        mock_generate.return_value = fake_response
 
         analyzer = Analyzer.__new__(Analyzer)
-        analyzer.client = mock_client
         analyzer.model = "test-model"
         with pytest.raises(RuntimeError, match=expected_error):
             analyzer.analyze(
@@ -133,20 +127,18 @@ def test_analyzer_validates_response_fields(
 
 
 def test_analyzer_rejects_files_not_in_retrieved_context():
-    fake_response = Mock()
-    fake_response.output_text = json.dumps({
+    fake_response = json.dumps({
         "root_cause": "The user lookup mishandles None.",
         "relevant_files": ["secret_file.py"],
         "confidence": "high",
         "evidence": ["The retrieved function returns None."],
     })
 
-    with patch("ai_agent.analyzer.OpenAI") as mock_openai:
-        mock_client = mock_openai.return_value
-        mock_client.responses.create.return_value = fake_response
+    with patch("ai_agent.analyzer.generate_text") as mock_openai:
+        mock_generate = mock_openai
+        mock_generate.return_value = fake_response
 
         analyzer = Analyzer.__new__(Analyzer)
-        analyzer.client = mock_client
         analyzer.model = "test-model"
 
         with pytest.raises(

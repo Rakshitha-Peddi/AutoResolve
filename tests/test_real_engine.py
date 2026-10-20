@@ -5,6 +5,7 @@ from backend.orchestrator.real_engine import RealFixEngine
 
 
 def test_real_engine_pipeline(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTORESOLVE_ENABLE_PUBLISH", "false")
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
     (repo / "tests").mkdir()
@@ -539,3 +540,43 @@ def test_regression_gate_rejects_unrelated_failed_text(
 
     assert result["passed"] is False
     assert result["stage"] == "regression_test_before_fix"
+
+
+# ---- merge / publish behaviour -------------------------------------------
+
+def test_merge_is_off_by_default(monkeypatch):
+    import pytest
+
+    monkeypatch.delenv("AUTORESOLVE_ENABLE_MERGE", raising=False)
+    engine = object.__new__(RealFixEngine)
+    with pytest.raises(RuntimeError, match="switched off"):
+        engine.merge("owner/repo", "autoresolve/bug-1")
+
+
+def test_merge_merges_the_open_pull_request(monkeypatch):
+    from types import SimpleNamespace
+    from unittest import mock
+
+    import backend.orchestrator.real_engine as module
+
+    monkeypatch.setenv("AUTORESOLVE_ENABLE_MERGE", "true")
+    pull = mock.Mock(html_url="https://github.com/o/r/pull/1")
+    pull.merge.return_value = SimpleNamespace(merged=True, message="ok")
+    repo = mock.Mock()
+    repo.owner.login = "o"
+    repo.get_pulls.return_value = [pull]
+
+    engine = object.__new__(RealFixEngine)
+    engine.github_token = "token"
+    with mock.patch.object(module, "Github") as github:
+        github.return_value.get_repo.return_value = repo
+        assert engine.merge("o/r", "autoresolve/bug-1") == pull.html_url
+
+    repo.get_pulls.assert_called_once_with(state="open", head="o:autoresolve/bug-1")
+
+
+def test_parse_model_json_accepts_code_fences():
+    from ai_agent._json import parse_model_json
+
+    assert parse_model_json('```json\n{"a": 1}\n```') == {"a": 1}
+    assert parse_model_json('Here you go: {"a": 1} done') == {"a": 1}

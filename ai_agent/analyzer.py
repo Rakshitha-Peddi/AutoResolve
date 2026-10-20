@@ -1,20 +1,16 @@
 import os
 import json
 
-from openai import OpenAI
+from .ollama_client import generate_text
+
+from ._json import parse_model_json
 
 
 class Analyzer:
     """Analyze a bug using the relevant repository source code."""
 
     def __init__(self):
-        api_key = os.getenv("OPENAI_API_KEY")
-
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY is not configured.")
-
-        self.client = OpenAI(api_key=api_key)
-        self.model = os.getenv("OPENAI_MODEL", "gpt-5.6")
+        self.model = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
 
     def analyze(self, bug, context):
         repository_context = "\n\n".join(
@@ -54,16 +50,11 @@ Return ONLY valid JSON:
 }}
 """
 
-        response = self.client.responses.create(
-            model=self.model,
-            input=prompt,
-        )
-
-        text = response.output_text.strip()
+        text = generate_text(prompt, self.model)
 
 
         try:
-            result = json.loads(text)
+            result = parse_model_json(text)
         except json.JSONDecodeError as exc:
             raise RuntimeError(
                 "AI analyzer returned invalid JSON."
