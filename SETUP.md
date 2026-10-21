@@ -1,4 +1,4 @@
-# AutoResolve — setup task list (zero knowledge needed)
+# AutoResolve — setup task list 
 
 Do the steps in order. Each step says how you know it worked.
 Commands go in a **terminal** opened inside the project folder
