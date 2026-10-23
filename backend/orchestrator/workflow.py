@@ -272,6 +272,7 @@ def _run_single_iteration(bug_id: int) -> Bug:
                 "AI test generator",
                 "AI fixer",
                 "AI analyzer",
+                "Ollama reached the generation token limit",
             )
 
             is_retryable = any(

@@ -4,7 +4,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-def generate_text(prompt, model, max_tokens=1024):
+def generate_text(prompt, model, max_tokens=2048):
     host = os.getenv(
         "OLLAMA_HOST", "http://localhost:11434"
     ).rstrip("/")

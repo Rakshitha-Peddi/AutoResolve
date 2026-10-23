@@ -15,6 +15,85 @@ class RegressionTestGenerator:
     def __init__(self):
         self.model = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
 
+    @staticmethod
+    def _repair_missing_imports(code, context):
+        """Add imports for uniquely identified repository functions."""
+        if not context:
+            return code
+
+        tree = ast.parse(code)
+        defined = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(
+                node,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+            )
+        }
+
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                imported.update(
+                    alias.asname or alias.name
+                    for alias in node.names
+                )
+            elif isinstance(node, ast.Import):
+                imported.update(
+                    alias.asname or alias.name.split(".")[0]
+                    for alias in node.names
+                )
+
+        candidates = {}
+
+        for path, source in context:
+            if not path.endswith(".py"):
+                continue
+
+            try:
+                source_tree = ast.parse(source)
+            except SyntaxError:
+                continue
+
+            module = path.replace("\\", "/").removesuffix(".py")
+            module = module.replace("/", ".")
+
+            if module.endswith(".__init__"):
+                module = module.removesuffix(".__init__")
+
+            if not module or not module.isidentifier() and any(
+                not part.isidentifier() for part in module.split(".")
+            ):
+                continue
+
+            for node in source_tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    candidates.setdefault(node.name, set()).add(module)
+
+        needed = set()
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+                continue
+
+            name = node.id
+            if name in defined or name in imported:
+                continue
+
+            modules = candidates.get(name, set())
+            if len(modules) == 1:
+                needed.add((next(iter(modules)), name))
+
+        if not needed:
+            return code
+
+        imports = "\n".join(
+            f"from {module} import {name}"
+            for module, name in sorted(needed)
+        )
+
+        return imports + "\n\n" + code
+
     def generate(self, bug, feedback="", context=None):
         repository_code = "\n\n".join(
             f"FILE: {path}\n{content}"
@@ -92,6 +171,17 @@ Return ONLY valid JSON:
                 raise RuntimeError(
                     f"AI test generator returned an invalid '{field}' field."
                 )
+        # Repair missing imports when the repository identifies them.
+        try:
+            result["code"] = self._repair_missing_imports(
+                result["code"],
+                context,
+            )
+        except SyntaxError as exc:
+            raise RuntimeError(
+                f"AI-generated regression test has invalid Python syntax: {exc}"
+            ) from exc
+
         # Reject generated tests containing undefined Python names.
         lint_result = subprocess.run(
             [
