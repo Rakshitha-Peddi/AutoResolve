@@ -4,7 +4,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-def generate_text(prompt, model):
+def generate_text(prompt, model, max_tokens=1024):
     host = os.getenv(
         "OLLAMA_HOST", "http://localhost:11434"
     ).rstrip("/")
@@ -14,7 +14,10 @@ def generate_text(prompt, model):
         "messages": [{"role": "user", "content": prompt}],
         "format": "json",
         "stream": False,
-        "options": {"temperature": 0},
+        "options": {
+            "temperature": 0,
+            "num_predict": max_tokens,
+        },
     }
 
     request = Request(
@@ -40,6 +43,12 @@ def generate_text(prompt, model):
         raise RuntimeError(
             "Ollama returned an invalid API response."
         ) from exc
+    if result.get("done_reason") == "length":
+        raise RuntimeError(
+            "Ollama reached the generation token limit "
+            f"after {result.get('eval_count', 'unknown')} tokens. "
+            "The JSON response may be incomplete."
+        )
 
     content = result.get("message", {}).get("content")
     if not isinstance(content, str) or not content.strip():

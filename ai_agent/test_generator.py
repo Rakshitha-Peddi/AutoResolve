@@ -1,3 +1,6 @@
+import ast
+import sys
+import subprocess
 import json
 import os
 
@@ -34,8 +37,12 @@ REPOSITORY CODE (use these real module paths and function names in imports):
 
 Requirements:
 
-1. Reproduce the reported failure.
-2. Verify the expected corrected behavior.
+1. Write a regression test that asserts the CORRECT behavior after the bug is fixed.
+   Do NOT write a test that expects or accepts the reported bug or exception.
+2. The test must FAIL on the original buggy code and PASS after a correct fix.
+   For a crash caused by invalid input, call the affected function directly
+   and assert its expected return value or other correct behavior.
+   Do NOT use pytest.raises() to expect the reported crash.
 3. Follow the repository's existing testing conventions.
    The test file path MUST start with tests/ and must import only modules that exist above.
    The test must FAIL on the current (unfixed) code and PASS once the bug is fixed.
@@ -43,6 +50,13 @@ Requirements:
 5. Return a complete test file or a complete test function.
 6. Use pytest unless the bug clearly requires another framework.
 7. Do not use Markdown code fences.
+8. Generate the smallest possible regression test.
+9. Prefer one pytest test function with a single focused assertion.
+10. Keep the Python test code under 15 lines.
+11. Do not include explanations, comments, or unrelated tests in the code.
+12. Test functions MUST have zero parameters. Do not use pytest fixtures.
+13. Import the tested function or module explicitly.
+14. Create all test inputs inside the test function.
 
 Return ONLY valid JSON:
 
@@ -78,5 +92,62 @@ Return ONLY valid JSON:
                 raise RuntimeError(
                     f"AI test generator returned an invalid '{field}' field."
                 )
+        # Reject generated tests containing undefined Python names.
+        lint_result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "ruff",
+                "check",
+                "--select",
+                "F821",
+                "--stdin-filename",
+                "tests/test_regression.py",
+                "-",
+            ],
+            input=result["code"],
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
 
+        if lint_result.returncode != 0:
+            raise RuntimeError(
+                "AI-generated regression test failed static validation:\n"
+                + lint_result.stdout
+                + lint_result.stderr
+            )
+        # Reject generated tests that depend on unexpected pytest fixtures.
+        try:
+            tree = ast.parse(result["code"])
+        except SyntaxError as exc:
+            raise RuntimeError(
+                f"AI-generated regression test has invalid Python syntax: {exc}"
+            ) from exc
+
+        test_functions = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("test_")
+        ]
+
+        if not test_functions:
+            raise RuntimeError(
+                "AI-generated regression test contains no test function."
+            )
+
+        for function in test_functions:
+            args = function.args
+            if (
+                args.posonlyargs
+                or args.args
+                or args.kwonlyargs
+                or args.vararg
+                or args.kwarg
+            ):
+                raise RuntimeError(
+                    "AI-generated regression test uses function parameters "
+                    "or pytest fixtures."
+                )
         return result

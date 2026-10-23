@@ -101,13 +101,20 @@ Return ONLY valid JSON:
                 "AI analyzer returned invalid evidence."
             )
         retrieved_paths = {
-            path for _, path, _ in context
+            path.replace("\\", "/"): path
+            for _, path, _ in context
         }
 
         unsupported_files = [
             path for path in result["relevant_files"]
-            if path not in retrieved_paths
+            if path.replace("\\", "/") not in retrieved_paths
         ]
+
+        if not unsupported_files:
+            result["relevant_files"] = [
+                retrieved_paths[path.replace("\\", "/")]
+                for path in result["relevant_files"]
+            ]
 
         if unsupported_files:
             raise RuntimeError(

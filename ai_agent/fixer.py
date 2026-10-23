@@ -1,3 +1,5 @@
+import difflib
+from pathlib import Path
 import json
 import os
 
@@ -21,45 +23,43 @@ class Fixer:
         )
 
         prompt = f"""
-You are the coding agent for AutoResolve.
+You are a Python code repair assistant.
 
-Your job is to fix the reported software bug in the supplied repository.
+BUG:
+{analysis.get("root_cause", "")}
 
-BUG ANALYSIS:
-{json.dumps(analysis, indent=2)}
-
-DEVELOPER FEEDBACK:
-{feedback or "None"}
-
-REPOSITORY CONTEXT:
+REPOSITORY FILES:
 {files_text}
 
-Rules:
+FEEDBACK:
+{feedback or "None"}
 
-1. Identify the actual cause of the bug from the supplied code.
-2. Make the smallest safe change that fixes the bug.
-3. Do not rewrite unrelated code.
-4. Preserve existing public APIs unless the bug requires otherwise.
-5. Include regression-test changes when appropriate.
-6. Return a valid unified git diff.
-7. The diff must be directly applicable with:
+Fix the bug with the smallest possible change.
 
-   git apply
-
-8. Use repository-relative paths.
-9. Do not use Markdown code fences.
-10. Do not explain the patch outside the JSON response.
-
-Return ONLY valid JSON in this exact shape:
+Return ONLY a valid JSON object with these fields:
 
 {{
-  "summary": "short explanation of the fix",
-  "root_cause": "actual root cause",
-  "patch": "complete unified git diff"
+  "summary": "one short sentence describing the fix",
+  "root_cause": "one short sentence explaining the bug",
+  "file_path": "repository-relative path of the source file",
+  "corrected_code": "complete corrected contents of that file"
 }}
+
+Rules:
+1. Change exactly one Python source file.
+2. Do not modify test files.
+3. Preserve all existing functions, return types, and working behavior.
+4. Return the complete corrected source file, not a diff.
+5. Make the smallest possible change. Do not rewrite unrelated code.
+6. Do not include Markdown code fences or explanations.
+7. Existing valid inputs must produce exactly the same outputs as before.
+8. Handle the reported failing input with a separate, minimal condition.
+9. Do not replace an existing return expression for valid inputs with a different value.
+10. If the bug involves None, add an explicit None check before accessing its attributes or keys.
+11. Preserve the original return statement for non-None inputs.
 """
 
-        text = generate_text(prompt, self.model)
+        text = generate_text(prompt, self.model,max_tokens=2048)
 
 
         try:
@@ -74,7 +74,12 @@ Return ONLY valid JSON in this exact shape:
                 "AI fixer returned an invalid response structure."
             )
 
-        for field in ("summary", "root_cause", "patch"):
+        for field in (
+            "summary",
+            "root_cause",
+            "file_path",
+            "corrected_code",
+        ):
             if (
                 not isinstance(result.get(field), str)
                 or not result[field].strip()
@@ -82,6 +87,70 @@ Return ONLY valid JSON in this exact shape:
                 raise RuntimeError(
                     f"AI fixer returned an invalid '{field}' field."
                 )
+
+        # Validate the AI-selected source file.
+        relative_path = Path(
+            result["file_path"].replace("\\", "/")
+        )
+
+        if (
+            relative_path.is_absolute()
+            or ".." in relative_path.parts
+            or relative_path.suffix != ".py"
+            or "tests" in relative_path.parts
+        ):
+            raise RuntimeError(
+                "AI fixer selected an unsafe source file."
+            )
+
+        repo_root = Path(repo_path).resolve()
+        source_file = (repo_root / relative_path).resolve()
+
+        if (
+            not source_file.is_relative_to(repo_root)
+            or not source_file.is_file()
+        ):
+            raise RuntimeError(
+                "AI fixer selected a missing or unsafe file."
+            )
+
+        original = source_file.read_text(encoding="utf-8")
+        corrected = result["corrected_code"]
+        # Preserve the source file's final newline convention.
+        if original.endswith("\n") and not corrected.endswith("\n"):
+            corrected += "\n"
+
+        if corrected == original:
+            raise RuntimeError(
+                "AI fixer did not change the source code."
+            )
+
+        # Check that the corrected code is valid Python.
+        try:
+            compile(corrected, str(relative_path), "exec")
+        except SyntaxError as exc:
+            raise RuntimeError(
+                f"AI fixer generated invalid Python: {exc}"
+            ) from exc
+
+        # Generate the Git patch deterministically.
+        git_path = relative_path.as_posix()
+
+        diff = "".join(
+            difflib.unified_diff(
+                original.splitlines(keepends=True),
+                corrected.splitlines(keepends=True),
+                fromfile=f"a/{git_path}",
+                tofile=f"b/{git_path}",
+            )
+        )
+
+        patch = (
+            f"diff --git a/{git_path} b/{git_path}\n"
+            + diff
+        )
+
+        return patch
 
         patch = result["patch"].strip()
 

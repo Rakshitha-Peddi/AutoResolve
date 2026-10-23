@@ -259,7 +259,10 @@ class RealFixEngine(FixEngine):
                 "Generated test path escapes the repository."
             )
 
-        if not str(relative_path).startswith("tests/"):
+        if (
+            not relative_path.parts
+            or relative_path.parts[0] != "tests"
+        ):
             raise RuntimeError(
                 "Generated regression tests must live under tests/."
             )

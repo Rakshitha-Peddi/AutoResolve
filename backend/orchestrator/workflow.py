@@ -139,10 +139,25 @@ def _make_request(bug: Bug) -> FixRequest:
             if item.get("text")
         ],
     )
+def _validation_feedback(test_results: dict) -> str:
+    """Create bounded feedback for the next AI repair attempt."""
+    stage = test_results.get("stage", "unknown")
+    error = test_results.get("error") or ""
+    stdout = test_results.get("stdout") or ""
+    stderr = test_results.get("stderr") or ""
 
+    details = "\n".join(
+        str(value) for value in (error, stdout, stderr) if value
+    )
 
-def run_iteration(bug_id: int) -> Bug:
-    """Run one AI repair attempt in its own database session."""
+    return (
+        f"Previous repair attempt failed during {stage}.\n"
+        "Correct the problem before proposing another fix.\n"
+        f"Validation details:\n{details[-4000:]}"
+    )
+
+def _run_single_iteration(bug_id: int) -> Bug:
+    """Run exactly one AI repair attempt in its own database session."""
 
     with SessionLocal() as db:
         bug = _get_bug(db, bug_id)
@@ -188,7 +203,11 @@ def run_iteration(bug_id: int) -> Bug:
                 "changed_files": result.changed_files,
                 "test_results": result.test_results,
                 "branch": result.branch,
-                "outcome": "pending_review",
+                "outcome": (
+                    "pending_review"
+                    if result.test_results.get("passed") is True
+                    else "validation_failed"
+                ),
             }
 
             attempts = [dict(item) for item in (bug.attempts or [])]
@@ -196,13 +215,34 @@ def run_iteration(bug_id: int) -> Bug:
             bug.attempts = attempts
 
             if result.test_results.get("passed") is not True:
-                bug.status = FAILED
-
-                _add_history(
-                    bug,
-                    "failed",
-                    "Generated fix did not pass validation.",
+                bug.status = (
+                    FIXING
+                    if bug.iteration < MAX_ITERATIONS
+                    else FAILED
                 )
+                feedback_items = list(bug.feedback or [])
+                feedback_items.append(
+                    {
+                        "iteration": bug.iteration,
+                        "text": _validation_feedback(result.test_results),
+                        "at": _utcnow().isoformat() + "Z",
+                    }
+                )
+                bug.feedback = feedback_items
+
+                if bug.status == FIXING:
+                    _add_history(
+                        bug,
+                        "retry_pending",
+                        f"Attempt {bug.iteration} failed validation. "
+                        "Another attempt is available.",
+                    )
+                else:
+                    _add_history(
+                        bug,
+                        "failed",
+                        f"Repair failed after {bug.iteration} attempts.",
+                    )
             else:
                 bug.status = AWAITING_REVIEW
 
@@ -217,26 +257,92 @@ def run_iteration(bug_id: int) -> Bug:
 
             return bug
 
-        except Exception:
+        except Exception as exc:
             log.exception(
                 "Repair attempt failed for BUG-%s at iteration %s",
                 bug.id,
                 bug.iteration,
             )
 
-            bug.status = FAILED
+            error_message = str(exc)
 
-            _add_history(
-                bug,
-                "failed",
-                "Repair attempt failed. Check server logs for details.",
+            # Retry only errors caused by invalid AI-generated output.
+            retryable_errors = (
+                "AI-generated regression test",
+                "AI test generator",
+                "AI fixer",
+                "AI analyzer",
             )
+
+            is_retryable = any(
+                marker in error_message
+                for marker in retryable_errors
+            )
+
+            can_retry = (
+                is_retryable
+                and bug.iteration < MAX_ITERATIONS
+            )
+
+            bug.status = FIXING if can_retry else FAILED
+
+            attempts = list(bug.attempts or [])
+            attempts.append({
+                "iteration": bug.iteration,
+                "summary": "Repair attempt raised an exception.",
+                "plan": [],
+                "changed_files": [],
+                "test_results": {
+                    "passed": False,
+                    "stage": "ai_generation",
+                    "error": error_message[:2000],
+                },
+                "branch": None,
+                "outcome": "generation_failed",
+            })
+            bug.attempts = attempts
+
+            if can_retry:
+                feedback_items = list(bug.feedback or [])
+                feedback_items.append({
+                    "iteration": bug.iteration,
+                    "text": (
+                        "Previous AI generation failed. "
+                        "Correct this error in the next attempt:\n"
+                        + error_message[:2000]
+                    ),
+                    "at": _utcnow().isoformat() + "Z",
+                })
+                bug.feedback = feedback_items
+
+                _add_history(
+                    bug,
+                    "retry_pending",
+                    f"Attempt {bug.iteration} failed during AI generation. "
+                    "Retrying with error feedback.",
+                )
+            else:
+                _add_history(
+                    bug,
+                    "failed",
+                    "Repair attempt failed. Check server logs for details.",
+                )
 
             db.commit()
             db.refresh(bug)
 
             return bug
 
+def run_iteration(bug_id: int) -> Bug:
+    """Run repair attempts until validation succeeds or retries run out."""
+    while True:
+        bug = _run_single_iteration(bug_id)
+
+        if bug.status != FIXING:
+            return bug
+
+        if bug.iteration >= MAX_ITERATIONS:
+            return bug
 
 def approve(db: Session, bug: Bug) -> Bug:
     if bug.status != AWAITING_REVIEW:

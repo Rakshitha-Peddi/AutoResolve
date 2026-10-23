@@ -44,6 +44,12 @@ def run_pytest_in_worker(
 
     container_name = f"autoresolve-worker-{uuid.uuid4().hex[:12]}"
 
+    container_user = (
+        f"{os.getuid()}:{os.getgid()}"
+        if hasattr(os, "getuid") and hasattr(os, "getgid")
+        else "65534:65534"
+    )
+
     command = [
         "docker", "run", "--rm",
         "--name", container_name,
@@ -53,7 +59,7 @@ def run_pytest_in_worker(
         "--pids-limit", "64",
         "--memory", "256m",
         "--cpus", "0.5",
-        "--user", f"{os.getuid()}:{os.getgid()}",
+        "--user", container_user,
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
         "--mount", f"type=bind,src={repo_root},dst=/workspace,readonly",
         "--workdir", "/workspace",
@@ -90,6 +96,35 @@ def run_pytest_in_worker(
 
     deadline = time.monotonic() + timeout
 
+    if os.name == "nt":
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            subprocess.run(
+                ["docker", "rm", "-f", container_name],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            raise
+
+        stdout_text = stdout.decode("utf-8", errors="replace")[-MAX_OUTPUT_BYTES:]
+        stderr_text = stderr.decode("utf-8", errors="replace")[-MAX_OUTPUT_BYTES:]
+
+        if process.returncode in (125, 126, 127):
+            raise RuntimeError(
+                f"Docker worker failed (exit {process.returncode}): "
+                f"{stderr_text[-500:]}"
+            )
+
+        return subprocess.CompletedProcess(
+            command,
+            process.returncode,
+            stdout_text,
+            stderr_text,
+        )
     try:
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ, "stdout")

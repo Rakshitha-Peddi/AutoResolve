@@ -18,3 +18,5 @@ AutoResolve_NEW.zip
 
 # AutoResolve temporary Docker test workspaces
 /.autoresolve-test-workspaces/
+.autoresolve-debug-repo/
+.autoresolve-debug.patch
