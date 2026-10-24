@@ -1,6 +1,6 @@
 
 import json
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -32,7 +32,8 @@ def test_generator_accepts_valid_response():
         "summary": "Tests missing-user handling",
         "code": (
             "def test_missing_user():\n"
-            "    assert lookup_user(None) is None\n"
+            "    user = {}\n"
+            "    assert user.get('id') is None\n"
         ),
     })
 
