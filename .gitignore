@@ -21,3 +21,6 @@ credentials_*.zip
 /.autoresolve-test-workspaces/
 .autoresolve-debug-repo/
 .autoresolve-debug.patch
+
+# AutoResolve runtime data
+.autoresolve_data/

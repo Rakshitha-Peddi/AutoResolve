@@ -29,3 +29,6 @@ class AIResponseError(AIError):
 
 class AINoProviderError(AIError):
     """No eligible AI provider is registered."""
+
+class AITransientError(AIProviderError):
+    """Temporary provider failure that may be retried."""

@@ -21,6 +21,7 @@ from ai_agent.ai.exceptions import (
     AIRateLimitError,
     AIResponseError,
     AITimeoutError,
+    AITransientError,
 )
 from ai_agent.ai.schemas import AIRequest, AIResponse
 
@@ -101,6 +102,10 @@ class GroqProvider(AIProvider):
             ) from exc
 
         except APIStatusError as exc:
+            if exc.status_code in (500, 502, 503):
+                raise AITransientError(
+                    f"Groq temporarily unavailable (HTTP {exc.status_code})."
+                ) from exc
             raise AIProviderError(
                 f"Groq API request failed (HTTP {exc.status_code})."
             ) from exc

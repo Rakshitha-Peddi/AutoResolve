@@ -14,6 +14,7 @@ from ai_agent.ai.exceptions import (
     AIRateLimitError,
     AIResponseError,
     AITimeoutError,
+    AITransientError,
 )
 from ai_agent.ai.schemas import AIRequest, AIResponse
 
@@ -87,6 +88,11 @@ class GeminiProvider(AIProvider):
             if exc.code in (408, 504):
                 raise AITimeoutError(
                     "Gemini request timed out."
+                ) from exc
+
+            if exc.code in (500, 502, 503):
+                raise AITransientError(
+                    f"Gemini temporarily unavailable (HTTP {exc.code})."
                 ) from exc
 
             raise AIProviderError(
