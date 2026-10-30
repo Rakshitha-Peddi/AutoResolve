@@ -15,6 +15,7 @@ build/
 credentials/
 credentials.zip
 AutoResolve_NEW.zip
+credentials_*.zip
 
 # AutoResolve temporary Docker test workspaces
 /.autoresolve-test-workspaces/
