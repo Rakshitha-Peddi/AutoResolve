@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ._json import parse_model_json
 from .ollama_client import generate_text
+from .source_safety import contains_sensitive_source
 
 
 class Fixer:
@@ -124,8 +125,29 @@ Rules:
                 "AI fixer selected an unsafe source file."
             )
 
+        # The model may modify only files supplied by the retriever.
+        retrieved_paths = {
+            Path(path.replace("\\", "/")).as_posix()
+            for path, _content in context
+        }
+
+        if relative_path.as_posix() not in retrieved_paths:
+            raise RuntimeError(
+                "AI fixer selected a file that was not retrieved."
+            )
+
         repo_root = Path(repo_path).resolve()
-        source_file = (repo_root / relative_path).resolve()
+
+        # Reject symlinks in the source path, including parent directories.
+        candidate = repo_root
+        for part in relative_path.parts:
+            candidate = candidate / part
+            if candidate.is_symlink():
+                raise RuntimeError(
+                    "AI fixer selected an unsafe symlink path."
+                )
+
+        source_file = candidate.resolve()
 
         if (
             not source_file.is_relative_to(repo_root)
@@ -136,6 +158,21 @@ Rules:
             )
 
         original = source_file.read_text(encoding="utf-8")
+        # The source must still match the version supplied to the AI.
+        retrieved_content = {
+            Path(path.replace("\\", "/")).as_posix(): content
+            for path, content in context
+        }
+
+        if original != retrieved_content[relative_path.as_posix()]:
+            raise RuntimeError(
+                "AI fixer detected that the source file changed "
+                "after repository retrieval."
+            )
+        if contains_sensitive_source(original):
+            raise RuntimeError(
+                "AI fixer cannot modify a file containing sensitive content."
+            )
         corrected = result["corrected_code"]
         # Preserve the source file's final newline convention.
         if original.endswith("\n") and not corrected.endswith("\n"):
@@ -170,42 +207,5 @@ Rules:
             f"diff --git a/{git_path} b/{git_path}\n"
             + diff
         )
-
-        return patch
-
-        patch = result["patch"].strip()
-
-        if not patch:
-            raise RuntimeError(
-                "AI fixer returned an empty patch."
-            )
-
-
-        import re
-
-        if "--- " not in patch or "+++ " not in patch:
-            raise RuntimeError(
-                "AI fixer did not return a valid unified diff."
-            )
-
-        if not re.search(
-            r"(?m)^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@",
-            patch,
-        ):
-            raise RuntimeError(
-                "AI fixer did not return a valid unified diff."
-            )
-
-        diff_lines = patch.splitlines()
-        if not any(
-            line.startswith("+") and not line.startswith("+++")
-            for line in diff_lines
-        ) or not any(
-            line.startswith("-") and not line.startswith("---")
-            for line in diff_lines
-        ):
-            raise RuntimeError(
-                "AI fixer did not return a valid unified diff."
-            )
 
         return patch

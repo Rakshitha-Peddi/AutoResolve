@@ -13,6 +13,7 @@ from .exceptions import (
     AITransientError,
 )
 from .model_router import ModelRouter
+from .prompt_safety import validate_outbound_prompt
 from .provider_health import ProviderHealthTracker
 from .registry import ProviderRegistry
 from .schemas import AIRequest, AIResponse
@@ -101,6 +102,11 @@ class AIManager:
         request: AIRequest,
         provider_name: str | None = None,
     ) -> AIResponse:
+        # Validate every message before provider selection, quota
+        # reservation, network requests, retries, or fallback.
+        for message in request.messages:
+            validate_outbound_prompt(message.content)
+
         if provider_name:
             primary = provider_name.strip().lower()
         elif self.model_router is not None:

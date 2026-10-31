@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from backend.orchestrator.engine import FixRequest
 from backend.orchestrator.real_engine import RealFixEngine
@@ -45,6 +44,7 @@ def test_real_engine_pipeline(monkeypatch, tmp_path):
                     "Add regression coverage.",
                 ],
                 "patch": (
+                    "diff --git a/src/user_service.py b/src/user_service.py\n"
                     "--- a/src/user_service.py\n"
                     "+++ b/src/user_service.py\n"
                     "@@ -1,2 +1,2 @@\n"
@@ -101,6 +101,10 @@ def test_validate_patch_rejects_invalid_diff(tmp_path):
 
     repo = tmp_path / "invalid_patch_repo"
     repo.mkdir()
+    (repo / "example.py").write_text(
+    "old_value = 1\n",
+    encoding="utf-8",
+    )
 
     subprocess.run(
         ["git", "init"],
@@ -225,6 +229,7 @@ def test_regression_test_fails_before_fix_and_passes_after_fix(tmp_path):
             text=True,
             capture_output=True,
             timeout=30,
+            check=False,
         )
 
     # The test must catch the bug in the original implementation.
@@ -258,6 +263,10 @@ def test_validate_patch_returns_failure_on_test_timeout(
 
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / "example.py").write_text(
+    "old_value = 1\n",
+    encoding="utf-8",
+)
 
     engine = object.__new__(RealFixEngine)
 
@@ -287,6 +296,7 @@ def test_validate_patch_returns_failure_on_test_timeout(
 
     result = engine._validate_patch(
         repo,
+        "diff --git a/example.py b/example.py\n"
         "--- a/example.py\n"
         "+++ b/example.py\n"
         "@@ -1 +1 @@\n"
@@ -308,7 +318,10 @@ def test_validate_patch_returns_failure_on_apply_timeout(
 
     repo = tmp_path / "repo"
     repo.mkdir()
-
+    (repo / "example.py").write_text(
+        "old_value = 1\n",
+        encoding="utf-8",
+    )
     engine = object.__new__(RealFixEngine)
 
     def fake_run(*args, **kwargs):
@@ -324,6 +337,7 @@ def test_validate_patch_returns_failure_on_apply_timeout(
 
     result = engine._validate_patch(
         repo,
+        "diff --git a/example.py b/example.py\n"
         "--- a/example.py\n"
         "+++ b/example.py\n"
         "@@ -1 +1 @@\n"
@@ -409,6 +423,10 @@ def test_propose_fix_cleans_up_temporary_workspace(
 def test_validate_patch_rejects_path_outside_repository(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / "example.py").write_text(
+        "old_value = 1\n",
+        encoding="utf-8",
+    )
 
     outside_file = tmp_path / "outside.txt"
     outside_file.write_text("original content\n")
@@ -437,6 +455,10 @@ def test_validate_patch_does_not_modify_file_through_external_symlink(
 
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / "example.py").write_text(
+        "old_value = 1\n",
+        encoding="utf-8",
+    )
 
     outside_file = tmp_path / "outside.txt"
     outside_file.write_text("original content\n")
@@ -580,3 +602,61 @@ def test_parse_model_json_accepts_code_fences():
 
     assert parse_model_json('```json\n{"a": 1}\n```') == {"a": 1}
     assert parse_model_json('Here you go: {"a": 1} done') == {"a": 1}
+
+
+def test_generated_test_cannot_overwrite_existing_file(tmp_path):
+    from backend.orchestrator.real_engine import RealFixEngine
+
+    repo = tmp_path / "repo"
+    (repo / "tests").mkdir(parents=True)
+
+    existing = repo / "tests" / "test_security.py"
+    existing.write_text(
+        "def test_security():\n    assert True\n",
+        encoding="utf-8",
+    )
+
+    engine = object.__new__(RealFixEngine)
+
+    with pytest.raises(
+        RuntimeError,
+        match="already exists",
+    ):
+        engine._write_generated_test(
+            repo,
+            {
+                "path": "tests/test_security.py",
+                "code": (
+                    "def test_security():\n"
+                    "    assert False\n"
+                ),
+            },
+        )
+
+    assert existing.read_text(encoding="utf-8") == (
+        "def test_security():\n    assert True\n"
+    )
+
+
+def test_generated_test_creates_new_file(tmp_path):
+    from backend.orchestrator.real_engine import RealFixEngine
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    engine = object.__new__(RealFixEngine)
+
+    result = engine._write_generated_test(
+        repo,
+        {
+            "path": "tests/test_generated_regression.py",
+            "code": "def test_regression():\n    assert True\n",
+        },
+    )
+
+    assert result["path"] == "tests/test_generated_regression.py"
+    assert (
+        repo / "tests" / "test_generated_regression.py"
+    ).read_text(encoding="utf-8") == (
+        "def test_regression():\n    assert True\n"
+    )

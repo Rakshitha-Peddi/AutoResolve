@@ -10,7 +10,6 @@ import time
 import uuid
 from pathlib import Path
 
-
 WORKER_IMAGE = os.getenv(
     "AUTORESOLVE_WORKER_IMAGE",
     "autoresolve-test-worker:python312",
@@ -31,16 +30,18 @@ def run_pytest_in_worker(
         raise FileNotFoundError("Worker repository directory is missing.")
     if timeout <= 0:
         raise ValueError("Worker timeout must be positive.")
-    if test_args is not None:
-        if not isinstance(test_args, list) or any(
+    if test_args is not None and (
+        not isinstance(test_args, list)
+        or any(
             not isinstance(arg, str)
             or not arg
             or arg.startswith("-")
             or Path(arg).is_absolute()
             or ".." in Path(arg).parts
             for arg in test_args
-        ):
-            raise ValueError("Invalid test arguments.")
+        )
+    ):
+        raise ValueError("Invalid test arguments.")
 
     container_name = f"autoresolve-worker-{uuid.uuid4().hex[:12]}"
 

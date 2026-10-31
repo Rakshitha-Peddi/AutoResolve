@@ -17,6 +17,13 @@ from github import Github
 from ai_agent.engine import CodeFixEngine
 from backend.orchestrator.docker_worker import run_pytest_in_worker
 from backend.orchestrator.engine import FixEngine, FixRequest, FixResult
+from backend.orchestrator.patch_safety import (
+    UnsafePatchError,
+    validate_patch_target,
+)
+from backend.orchestrator.publish_safety import (
+    stage_authorized_files,
+)
 
 
 def _merge_enabled() -> bool:
@@ -229,6 +236,8 @@ class RealFixEngine(FixEngine):
                     repo_path,
                     request,
                     analysis["root_cause"],
+                    patch,
+                    test_file["path"],
                 )
                 summary += f" Pull request opened: {pr_url}"
 
@@ -320,7 +329,15 @@ class RealFixEngine(FixEngine):
                 "Generated test path escapes the repository."
             )
 
-        destination.write_text(code)
+        # Never overwrite an existing repository test.
+        # Exclusive creation also prevents a simple check-then-write race.
+        try:
+            with destination.open("x", encoding="utf-8") as test_file:
+                test_file.write(code)
+        except FileExistsError as exc:
+            raise RuntimeError(
+                "Generated regression test already exists."
+            ) from exc
 
 
         return {
@@ -423,6 +440,14 @@ class RealFixEngine(FixEngine):
         patch: str,
     ) -> dict:
         try:
+            validate_patch_target(repo_path, patch)
+        except (UnsafePatchError, OSError) as exc:
+            return {
+                "passed": False,
+                "stage": "patch",
+                "error": str(exc),
+            }
+        try:
             apply_result = subprocess.run(
                 [
                     "git",
@@ -520,6 +545,8 @@ class RealFixEngine(FixEngine):
         repo_path: Path,
         request: FixRequest,
         root_cause: str,
+        patch: str,
+        regression_test_path: str,
     ) -> tuple[str, str]:
         """Commit the validated change, push a branch and open a pull request.
 
@@ -561,7 +588,13 @@ class RealFixEngine(FixEngine):
 
         try:
             git("checkout", "-b", branch)
-            git("add", "-A")
+
+            stage_authorized_files(
+                repo_path,
+                patch,
+                regression_test_path,
+            )
+
             git(
                 "-c", "user.name=AutoResolve",
                 "-c", "user.email=autoresolve@users.noreply.github.com",

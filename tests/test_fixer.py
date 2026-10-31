@@ -17,8 +17,15 @@ def run_fixer_with_response(response_text, tmp_path):
             repo_path=str(tmp_path),
             analysis={
                 "root_cause": "Example cause",
-                "context": [],
-            },
+                "context": [
+                    (
+                        "example.py",
+                        (tmp_path / "example.py").read_text(
+                            encoding="utf-8"
+                        ),
+                    )
+                ],
+            }
         )
 
 
