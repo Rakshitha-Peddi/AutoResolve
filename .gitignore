@@ -5,6 +5,7 @@ __pycache__/
 venv/
 .env
 .env.*
+!.env.example
 *.log
 *.db
 .vscode/
@@ -15,8 +16,12 @@ build/
 credentials/
 credentials.zip
 AutoResolve_NEW.zip
+credentials_*.zip
 
 # AutoResolve temporary Docker test workspaces
 /.autoresolve-test-workspaces/
 .autoresolve-debug-repo/
 .autoresolve-debug.patch
+
+# AutoResolve runtime data
+.autoresolve_data/

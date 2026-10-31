@@ -1,16 +1,16 @@
-import os
 import json
-
-from .ollama_client import generate_text
+import os
 
 from ._json import parse_model_json
+from .ollama_client import generate_text
 
 
 class Analyzer:
     """Analyze a bug using the relevant repository source code."""
 
-    def __init__(self):
+    def __init__(self, ai_adapter=None):
         self.model = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+        self.ai_adapter = ai_adapter
 
     def analyze(self, bug, context):
         repository_context = "\n\n".join(
@@ -50,7 +50,14 @@ Return ONLY valid JSON:
 }}
 """
 
-        text = generate_text(prompt, self.model)
+        if getattr(self, "ai_adapter", None) is not None:
+            text = self.ai_adapter.generate_text(
+                prompt=prompt,
+                task="bug_analysis",
+                max_tokens=2048,
+            )
+        else:
+            text = generate_text(prompt, self.model)
 
 
         try:
@@ -61,7 +68,9 @@ Return ONLY valid JSON:
             ) from exc
 
         if not isinstance(result, dict):
-            raise RuntimeError(
+            # An invalid model response is a pipeline failure,
+            # not an argument-type error.
+            raise RuntimeError(  # noqa: TRY004
                 "AI analyzer returned an invalid response structure."
             )
 

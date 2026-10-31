@@ -15,8 +15,15 @@ from pathlib import Path
 from github import Github
 
 from ai_agent.engine import CodeFixEngine
-from backend.orchestrator.engine import FixEngine, FixRequest, FixResult
 from backend.orchestrator.docker_worker import run_pytest_in_worker
+from backend.orchestrator.engine import FixEngine, FixRequest, FixResult
+from backend.orchestrator.patch_safety import (
+    UnsafePatchError,
+    validate_patch_target,
+)
+from backend.orchestrator.publish_safety import (
+    stage_authorized_files,
+)
 
 
 def _merge_enabled() -> bool:
@@ -36,12 +43,42 @@ def _publish_enabled() -> bool:
 class RealFixEngine(FixEngine):
     """Run the real AI repair pipeline on an isolated GitHub clone."""
 
+
     def __init__(self):
-        self.code_engine = CodeFixEngine()
+        backend = os.getenv(
+            "AUTORESOLVE_AI_BACKEND",
+            "ollama",
+        ).strip().lower()
+
+        if backend == "ollama":
+            # Preserve the existing local AI implementation.
+            self.code_engine = CodeFixEngine()
+
+        elif backend == "remote":
+            # Import lazily so legacy mode needs no remote setup.
+            from ai_agent.ai.bootstrap import build_ai_manager
+            from ai_agent.ai.sync_adapter import SyncAIAdapter
+
+            manager = build_ai_manager()
+            adapter = SyncAIAdapter(manager)
+
+            self.code_engine = CodeFixEngine(
+                ai_adapter=adapter
+            )
+
+        else:
+            raise ValueError(
+                "AUTORESOLVE_AI_BACKEND must be "
+                "'ollama' or 'remote'."
+            )
+
         self.github_token = os.getenv("GITHUB_TOKEN")
 
         if not self.github_token:
-            raise ValueError("GITHUB_TOKEN is not configured.")
+            raise ValueError(
+                "GITHUB_TOKEN is not configured."
+            )
+
 
     def _clone_repository(
         self,
@@ -82,6 +119,7 @@ class RealFixEngine(FixEngine):
                 text=True,
                 capture_output=True,
                 timeout=120,
+                check=False,
             )
 
             if result.returncode != 0:
@@ -198,6 +236,8 @@ class RealFixEngine(FixEngine):
                     repo_path,
                     request,
                     analysis["root_cause"],
+                    patch,
+                    test_file["path"],
                 )
                 summary += f" Pull request opened: {pr_url}"
 
@@ -289,7 +329,15 @@ class RealFixEngine(FixEngine):
                 "Generated test path escapes the repository."
             )
 
-        destination.write_text(code)
+        # Never overwrite an existing repository test.
+        # Exclusive creation also prevents a simple check-then-write race.
+        try:
+            with destination.open("x", encoding="utf-8") as test_file:
+                test_file.write(code)
+        except FileExistsError as exc:
+            raise RuntimeError(
+                "Generated regression test already exists."
+            ) from exc
 
 
         return {
@@ -392,6 +440,14 @@ class RealFixEngine(FixEngine):
         patch: str,
     ) -> dict:
         try:
+            validate_patch_target(repo_path, patch)
+        except (UnsafePatchError, OSError) as exc:
+            return {
+                "passed": False,
+                "stage": "patch",
+                "error": str(exc),
+            }
+        try:
             apply_result = subprocess.run(
                 [
                     "git",
@@ -405,6 +461,7 @@ class RealFixEngine(FixEngine):
                 cwd=repo_path,
                 capture_output=True,
                 timeout=30,
+                check=False,
             )
         except subprocess.TimeoutExpired as exc:
             stdout = exc.stdout or ""
@@ -488,6 +545,8 @@ class RealFixEngine(FixEngine):
         repo_path: Path,
         request: FixRequest,
         root_cause: str,
+        patch: str,
+        regression_test_path: str,
     ) -> tuple[str, str]:
         """Commit the validated change, push a branch and open a pull request.
 
@@ -520,6 +579,7 @@ class RealFixEngine(FixEngine):
                 text=True,
                 capture_output=True,
                 timeout=120,
+                check=False,
             )
             if result.returncode != 0:
                 raise RuntimeError(
@@ -528,7 +588,13 @@ class RealFixEngine(FixEngine):
 
         try:
             git("checkout", "-b", branch)
-            git("add", "-A")
+
+            stage_authorized_files(
+                repo_path,
+                patch,
+                regression_test_path,
+            )
+
             git(
                 "-c", "user.name=AutoResolve",
                 "-c", "user.email=autoresolve@users.noreply.github.com",

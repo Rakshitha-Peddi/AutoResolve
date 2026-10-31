@@ -1,19 +1,29 @@
-from .retriever import RepositoryRetriever
 from .analyzer import Analyzer
-from .planner import Planner
 from .fixer import Fixer
+from .planner import Planner
+from .retriever import RepositoryRetriever
 from .test_generator import RegressionTestGenerator
 
 
 class CodeFixEngine:
     """Coordinate retrieval, analysis, planning, fixing and test generation."""
 
-    def __init__(self):
+    def __init__(self, ai_adapter=None):
         self.retriever = RepositoryRetriever()
-        self.analyzer = Analyzer()
         self.planner = Planner()
-        self.fixer = Fixer()
-        self.test_generator = RegressionTestGenerator()
+
+        if ai_adapter is None:
+            # Preserve existing local Ollama behavior.
+            self.analyzer = Analyzer()
+            self.fixer = Fixer()
+            self.test_generator = RegressionTestGenerator()
+        else:
+            # Share one configured AI manager across all components.
+            self.analyzer = Analyzer(ai_adapter=ai_adapter)
+            self.fixer = Fixer(ai_adapter=ai_adapter)
+            self.test_generator = RegressionTestGenerator(
+                ai_adapter=ai_adapter
+            )
 
     def propose_fix(self, bug, repo_path, feedback=""):
         # 1. Retrieve relevant repository code.
@@ -40,10 +50,17 @@ class CodeFixEngine:
         )
 
         # 4. Generate the actual source-code patch.
+        fixer_feedback = (
+            "ORIGINAL BUG REQUIREMENTS:\n"
+            f"{bug.description}\n\n"
+            "PREVIOUS VALIDATION FEEDBACK:\n"
+            f"{feedback or 'None'}"
+        )
+
         patch = self.fixer.generate(
             repo_path,
             analysis,
-            feedback,
+            fixer_feedback,
         )
 
         # 5. Generate regression-test information.

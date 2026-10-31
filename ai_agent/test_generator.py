@@ -1,19 +1,19 @@
 import ast
-import sys
-import subprocess
 import json
 import os
-
-from .ollama_client import generate_text
+import subprocess
+import sys
 
 from ._json import parse_model_json
+from .ollama_client import generate_text
 
 
 class RegressionTestGenerator:
     """Generate regression-test code for a reported bug."""
 
-    def __init__(self):
+    def __init__(self, ai_adapter=None):
         self.model = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+        self.ai_adapter = ai_adapter
 
     @staticmethod
     def _repair_missing_imports(code, context):
@@ -147,7 +147,14 @@ Return ONLY valid JSON:
 }}
 """
 
-        text = generate_text(prompt, self.model)
+        if getattr(self, "ai_adapter", None) is not None:
+            text = self.ai_adapter.generate_text(
+                prompt=prompt,
+                task="test_generation",
+                max_tokens=2048,
+            )
+        else:
+            text = generate_text(prompt, self.model)
 
         try:
             result = parse_model_json(text)
@@ -157,7 +164,8 @@ Return ONLY valid JSON:
             ) from exc
 
         if not isinstance(result, dict):
-            raise RuntimeError(
+            # Invalid AI output is a pipeline failure.
+            raise RuntimeError(  # noqa: TRY004
                 "AI test generator returned an invalid response structure."
             )
 
@@ -199,6 +207,7 @@ Return ONLY valid JSON:
             text=True,
             capture_output=True,
             timeout=30,
+            check=False,
         )
 
         if lint_result.returncode != 0:
