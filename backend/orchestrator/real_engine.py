@@ -6,6 +6,7 @@ applies the generated source patch and regression test, then runs pytest.
 
 from __future__ import annotations
 
+import uuid
 import os
 import re
 import subprocess
@@ -554,7 +555,10 @@ class RealFixEngine(FixEngine):
         presses "Approve & Merge" (see merge()).
         """
         slug = self._repo_slug(request.repo)
-        branch = f"autoresolve/{request.bug_id.lower()}-attempt-{request.iteration}"
+        branch = (
+            f"autoresolve/{request.bug_id.lower()}"
+            f"-attempt-{request.iteration}-{uuid.uuid4().hex[:8]}"
+        )
 
         askpass = repo_path.parent / "git-askpass-push.sh"
         askpass.write_text(

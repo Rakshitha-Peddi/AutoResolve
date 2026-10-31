@@ -9,10 +9,11 @@ from .manager import AIManager
 from .model_router import ModelRouter
 from .providers.gemini import GeminiProvider
 from .providers.groq import GroqProvider
+from .providers.openrouter import OpenRouterProvider
 from .registry import ProviderRegistry
 from .sqlite_usage_tracker import SQLiteUsageTracker
 
-SUPPORTED_PROVIDERS = ("gemini", "groq")
+SUPPORTED_PROVIDERS = ("gemini", "groq", "openrouter")
 
 
 def _get_bool(name: str, default: bool = False) -> bool:
@@ -91,6 +92,7 @@ def build_ai_manager() -> AIManager:
     router = ModelRouter(
         enabled_providers=enabled,
         default_provider=primary,
+        task_routes={},
     )
 
     registry = ProviderRegistry()
@@ -100,6 +102,9 @@ def build_ai_manager() -> AIManager:
 
     if "groq" in enabled:
         registry.register(GroqProvider())
+
+    if "openrouter" in enabled:
+        registry.register(OpenRouterProvider())
 
     limits = {
         name: _get_int(
