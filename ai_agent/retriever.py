@@ -118,13 +118,18 @@ class RepositoryRetriever:
                 except (OSError, UnicodeError):
                     continue
 
+                relative_path = path.relative_to(root).as_posix()
+
+                filename_text = relative_path.lower()
+                source_text = text.lower()
+
                 score = sum(
-                    term in text.lower()
+                    (2 if term in filename_text else 0)
+                    + (1 if term in source_text else 0)
                     for term in terms
                 )
 
                 if score:
-                    relative_path = path.relative_to(root).as_posix()
                     matches.append(
                         (
                             score,
