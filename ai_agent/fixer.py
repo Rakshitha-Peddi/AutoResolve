@@ -1,18 +1,18 @@
 import difflib
-from pathlib import Path
 import json
 import os
-
-from .ollama_client import generate_text
+from pathlib import Path
 
 from ._json import parse_model_json
+from .ollama_client import generate_text
 
 
 class Fixer:
     """Generate repository-specific patches using an AI coding model."""
 
-    def __init__(self):
+    def __init__(self, ai_adapter=None):
         self.model = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+        self.ai_adapter = ai_adapter
 
     def generate(self, repo_path, analysis, feedback=""):
         context = analysis.get("context", [])
@@ -35,6 +35,15 @@ FEEDBACK:
 {feedback or "None"}
 
 Fix the bug with the smallest possible change.
+
+IMPORTANT CORRECTNESS REQUIREMENTS:
+- The fix must satisfy the expected behavior stated in the bug report.
+- Preventing an exception is insufficient if the returned value is incorrect.
+- Never invent a default value. Use the exact expected value from the bug report.
+- Preserve existing behavior for inputs that already work.
+- If the bug report explicitly requires "Guest", return "Guest", not None.
+- Prefer an explicit guard condition when handling None.
+- Ensure the corrected code would pass a regression test for the expected behavior.
 
 Return ONLY a valid JSON object with these fields:
 
@@ -59,7 +68,18 @@ Rules:
 11. Preserve the original return statement for non-None inputs.
 """
 
-        text = generate_text(prompt, self.model,max_tokens=2048)
+        if getattr(self, "ai_adapter", None) is not None:
+            text = self.ai_adapter.generate_text(
+                prompt=prompt,
+                task="bug_fix",
+                max_tokens=2048,
+            )
+        else:
+            text = generate_text(
+                prompt,
+                self.model,
+                max_tokens=2048,
+            )
 
 
         try:
@@ -70,7 +90,8 @@ Rules:
             ) from exc
 
         if not isinstance(result, dict):
-            raise RuntimeError(
+            # Invalid model output is a pipeline failure.
+            raise RuntimeError(  # noqa: TRY004
                 "AI fixer returned an invalid response structure."
             )
 

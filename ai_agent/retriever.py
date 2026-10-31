@@ -1,5 +1,6 @@
 from pathlib import Path
 
+
 class RepositoryRetriever:
     def retrieve(self, repo_path: str, query: str):
         root = Path(repo_path)
@@ -10,7 +11,8 @@ class RepositoryRetriever:
                 continue
             try:
                 text = p.read_text(errors="ignore")
-            except Exception:
+            except (OSError, UnicodeError):
+                # Skip source files that cannot be read.
                 continue
             score = sum(t in text.lower() for t in terms)
             if score:

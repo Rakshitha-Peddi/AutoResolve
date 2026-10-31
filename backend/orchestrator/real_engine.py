@@ -15,8 +15,8 @@ from pathlib import Path
 from github import Github
 
 from ai_agent.engine import CodeFixEngine
-from backend.orchestrator.engine import FixEngine, FixRequest, FixResult
 from backend.orchestrator.docker_worker import run_pytest_in_worker
+from backend.orchestrator.engine import FixEngine, FixRequest, FixResult
 
 
 def _merge_enabled() -> bool:
@@ -36,12 +36,42 @@ def _publish_enabled() -> bool:
 class RealFixEngine(FixEngine):
     """Run the real AI repair pipeline on an isolated GitHub clone."""
 
+
     def __init__(self):
-        self.code_engine = CodeFixEngine()
+        backend = os.getenv(
+            "AUTORESOLVE_AI_BACKEND",
+            "ollama",
+        ).strip().lower()
+
+        if backend == "ollama":
+            # Preserve the existing local AI implementation.
+            self.code_engine = CodeFixEngine()
+
+        elif backend == "remote":
+            # Import lazily so legacy mode needs no remote setup.
+            from ai_agent.ai.bootstrap import build_ai_manager
+            from ai_agent.ai.sync_adapter import SyncAIAdapter
+
+            manager = build_ai_manager()
+            adapter = SyncAIAdapter(manager)
+
+            self.code_engine = CodeFixEngine(
+                ai_adapter=adapter
+            )
+
+        else:
+            raise ValueError(
+                "AUTORESOLVE_AI_BACKEND must be "
+                "'ollama' or 'remote'."
+            )
+
         self.github_token = os.getenv("GITHUB_TOKEN")
 
         if not self.github_token:
-            raise ValueError("GITHUB_TOKEN is not configured.")
+            raise ValueError(
+                "GITHUB_TOKEN is not configured."
+            )
+
 
     def _clone_repository(
         self,
@@ -82,6 +112,7 @@ class RealFixEngine(FixEngine):
                 text=True,
                 capture_output=True,
                 timeout=120,
+                check=False,
             )
 
             if result.returncode != 0:
@@ -405,6 +436,7 @@ class RealFixEngine(FixEngine):
                 cwd=repo_path,
                 capture_output=True,
                 timeout=30,
+                check=False,
             )
         except subprocess.TimeoutExpired as exc:
             stdout = exc.stdout or ""
@@ -520,6 +552,7 @@ class RealFixEngine(FixEngine):
                 text=True,
                 capture_output=True,
                 timeout=120,
+                check=False,
             )
             if result.returncode != 0:
                 raise RuntimeError(

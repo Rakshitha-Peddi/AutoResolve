@@ -7,8 +7,7 @@ generation, validation and merge mechanics.
 from __future__ import annotations
 
 import logging
-
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,6 +23,7 @@ from backend.models.bug import (
 )
 from backend.models.schemas import BugCreate, Metrics
 from backend.orchestrator.engine import FixRequest, get_engine
+from backend.orchestrator.repair_feedback import build_repair_feedback
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class MergeFailed(Exception):
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _add_history(
@@ -214,34 +214,45 @@ def _run_single_iteration(bug_id: int) -> Bug:
             attempts.append(attempt)
             bug.attempts = attempts
 
-            if result.test_results.get("passed") is not True:
-                bug.status = (
-                    FIXING
-                    if bug.iteration < MAX_ITERATIONS
-                    else FAILED
-                )
-                feedback_items = list(bug.feedback or [])
-                feedback_items.append(
-                    {
-                        "iteration": bug.iteration,
-                        "text": _validation_feedback(result.test_results),
-                        "at": _utcnow().isoformat() + "Z",
-                    }
-                )
-                bug.feedback = feedback_items
 
-                if bug.status == FIXING:
+            if result.test_results.get("passed") is not True:
+                retry_feedback = build_repair_feedback(
+                    result.test_results
+                )
+
+                can_retry = (
+                    retry_feedback is not None
+                    and bug.iteration < MAX_ITERATIONS
+                )
+
+                bug.status = FIXING if can_retry else FAILED
+
+                if can_retry:
+                    feedback_items = list(bug.feedback or [])
+                    feedback_items.append(
+                        {
+                            "iteration": bug.iteration,
+                            "text": retry_feedback,
+                            "at": _utcnow().isoformat() + "Z",
+                        }
+                    )
+                    bug.feedback = feedback_items
                     _add_history(
                         bug,
                         "retry_pending",
                         f"Attempt {bug.iteration} failed validation. "
-                        "Another attempt is available.",
+                        "Retrying with regression-test feedback.",
                     )
                 else:
+                    stage = result.test_results.get(
+                        "stage", "unknown"
+                    )
                     _add_history(
                         bug,
                         "failed",
-                        f"Repair failed after {bug.iteration} attempts.",
+                        f"Repair stopped after attempt "
+                        f"{bug.iteration} at stage {stage}. "
+                        "No further automatic retry is permitted.",
                     )
             else:
                 bug.status = AWAITING_REVIEW
