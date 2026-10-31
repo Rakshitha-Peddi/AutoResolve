@@ -72,7 +72,12 @@ def test_engine_preserves_pipeline_order():
     engine.fixer.generate.assert_called_once_with(
         "/tmp/example-repository",
         analysis,
-        "Please retry",
+        (
+            "ORIGINAL BUG REQUIREMENTS:\n"
+            "Example bug\n\n"
+            "PREVIOUS VALIDATION FEEDBACK:\n"
+            "Please retry"
+        ),
     )
 
     engine.test_generator.generate.assert_called_once_with(

@@ -50,10 +50,17 @@ class CodeFixEngine:
         )
 
         # 4. Generate the actual source-code patch.
+        fixer_feedback = (
+            "ORIGINAL BUG REQUIREMENTS:\n"
+            f"{bug.description}\n\n"
+            "PREVIOUS VALIDATION FEEDBACK:\n"
+            f"{feedback or 'None'}"
+        )
+
         patch = self.fixer.generate(
             repo_path,
             analysis,
-            feedback,
+            fixer_feedback,
         )
 
         # 5. Generate regression-test information.
