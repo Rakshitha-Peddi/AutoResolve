@@ -45,3 +45,17 @@ def test_retriever_finds_relevant_source_file(tmp_path: Path):
     assert "database_lookup" in source
     assert "if user is None" in source
 
+def test_retriever_matches_filename_without_content_keywords(tmp_path):
+    from ai_agent.retriever import RepositoryRetriever
+
+    (tmp_path / "test.py").write_text(
+        'print(3 + "a")\n',
+        encoding="utf-8",
+    )
+
+    result = RepositoryRetriever().retrieve(
+        str(tmp_path),
+        'test.py raises TypeError. Expected output: 3a.',
+    )
+
+    assert any(path == "test.py" for _, path, _ in result)

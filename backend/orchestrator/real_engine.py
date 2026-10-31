@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 from github import Github
@@ -554,7 +555,10 @@ class RealFixEngine(FixEngine):
         presses "Approve & Merge" (see merge()).
         """
         slug = self._repo_slug(request.repo)
-        branch = f"autoresolve/{request.bug_id.lower()}-attempt-{request.iteration}"
+        branch = (
+            f"autoresolve/{request.bug_id.lower()}"
+            f"-attempt-{request.iteration}-{uuid.uuid4().hex[:8]}"
+        )
 
         askpass = repo_path.parent / "git-askpass-push.sh"
         askpass.write_text(

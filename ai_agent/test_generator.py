@@ -134,8 +134,21 @@ Requirements:
 10. Keep the Python test code under 15 lines.
 11. Do not include explanations, comments, or unrelated tests in the code.
 12. Test functions MUST have zero parameters. Do not use pytest fixtures.
-13. Import the tested function or module explicitly.
-14. Create all test inputs inside the test function.
+13. For ordinary Python functions, import the affected function
+    or module explicitly and call it with the reported inputs.
+
+14. For a standalone Python script containing top-level statements
+    (such as print(3 + "a")), execute the script exactly once.
+    Prefer runpy.run_path() and redirect_stdout() to capture output.
+    Do not import the script and then reload it.
+
+15. For output-related bugs, assert the exact expected output.
+
+16. Create all test inputs inside the test function.
+
+17. Never execute the target script twice in one regression test.
+
+18. The regression test must fail before the fix and pass afterward.
 
 Return ONLY valid JSON:
 
