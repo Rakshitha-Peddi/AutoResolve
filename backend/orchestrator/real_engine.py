@@ -6,11 +6,11 @@ applies the generated source patch and regression test, then runs pytest.
 
 from __future__ import annotations
 
-import uuid
 import os
 import re
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 from github import Github
