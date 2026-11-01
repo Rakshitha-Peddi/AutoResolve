@@ -29,9 +29,8 @@ class CodeFixEngine:
         # 1. Retrieve relevant repository code.
         context = self.retriever.retrieve(
             repo_path,
-            bug.description,
+            f"{getattr(bug, 'title', '')}\n{bug.description}",
         )
-
         if not context:
             raise RuntimeError(
                 "Repository retrieval found no relevant source files."

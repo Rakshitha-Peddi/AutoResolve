@@ -78,7 +78,17 @@ def contains_sensitive_source(source: str) -> bool:
     try:
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
-        return True
+        # Broken Python cannot be inspected with an AST.
+        # Apply a conservative identifier check instead.
+        identifiers = re.findall(
+            r"[A-Za-z_][A-Za-z0-9_]*",
+            source,
+        )
+
+        return any(
+            _sensitive_name(name)
+            for name in identifiers
+        )
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):

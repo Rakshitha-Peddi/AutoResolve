@@ -209,6 +209,11 @@ def _run_single_iteration(bug_id: int) -> Bug:
             bug.test_results = result.test_results
             bug.branch = result.branch
 
+            review_ready = (
+                result.test_results.get("passed") is True
+                or result.test_results.get("review_ready") is True
+            )
+
             attempt = {
                 "iteration": bug.iteration,
                 "summary": result.summary,
@@ -218,7 +223,7 @@ def _run_single_iteration(bug_id: int) -> Bug:
                 "branch": result.branch,
                 "outcome": (
                     "pending_review"
-                    if result.test_results.get("passed") is True
+                    if review_ready
                     else "validation_failed"
                 ),
             }
@@ -228,7 +233,7 @@ def _run_single_iteration(bug_id: int) -> Bug:
             bug.attempts = attempts
 
 
-            if result.test_results.get("passed") is not True:
+            if not review_ready:
                 retry_feedback = build_repair_feedback(
                     result.test_results
                 )
@@ -278,7 +283,7 @@ def _run_single_iteration(bug_id: int) -> Bug:
 
             db.commit()
             db.refresh(bug)
-            if result.test_results.get("passed") is not True:
+            if not review_ready:
                 results = bug.test_results or {}
                 reason = (results.get("error") or results.get("stderr") or
                           results.get("stdout") or

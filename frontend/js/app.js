@@ -341,6 +341,24 @@ function diffStats(diff) {
     });
     return { add, del };
 }
+function getValidationStatus(results = {}) {
+    if (results.passed === true) {
+        return 'passed';
+    }
+
+    if (
+        results.stage === 'baseline_blocked' &&
+        results.focused_regression_passed === true
+    ) {
+        return 'partial';
+    }
+
+    if (results.passed === false) {
+        return 'failed';
+    }
+
+    return 'pending';
+}
 
 /* Pipeline stages: only mark what the backend data confirms. */
 function pipelineStages(bug) {
@@ -352,6 +370,7 @@ function pipelineStages(bug) {
     const merged = status === 'merged';
     const failedRun = status === 'failed';
     const hasTests = typeof tr.passed === 'boolean';
+    const validationStatus = getValidationStatus(tr);
     const prConfirmed = !!(bug.pr_url || bug.pull_request_url || bug.pr_number) ||
         history.some(h => /pull request|\bpr\b.{0,12}(creat|open)/i.test(`${h.event || ''} ${h.message || ''}`));
 
@@ -359,7 +378,14 @@ function pipelineStages(bug) {
         { name: 'Imported', done: true },
         { name: 'Analyzing', done: !!bug.root_cause || merged, active: status === 'fixing' && !bug.root_cause },
         { name: 'Fix generated', done: files.length > 0 || merged, active: status === 'fixing' && !!bug.root_cause && !files.length },
-        { name: 'Validating', done: hasTests || merged, bad: hasTests && tr.passed === false, active: status === 'fixing' && files.length > 0 && !hasTests },
+        {
+            name: 'Validating',
+            done: validationStatus === 'passed',
+            partial: validationStatus === 'partial',
+            bad: validationStatus === 'failed',
+            active: validationStatus === 'pending' &&
+                status === 'fixing' && files.length > 0
+        },
         { name: 'PR created', done: prConfirmed || merged },
         { name: 'Developer review', done: merged, active: status === 'awaiting_review', needsYou: true },
         { name: 'Merged', done: merged }
@@ -367,7 +393,16 @@ function pipelineStages(bug) {
     let failMarked = defs.some(d => d.bad);
     return defs.map(d => {
         let state = 'pending', text = 'Not confirmed';
-        if (d.bad) { state = 'failed'; text = 'Tests failed'; }
+        if (d.bad) {
+            state = 'failed';
+            text = 'Tests failed';
+        } else if (d.partial) {
+            state = 'partial';
+            text = 'Partially validated';
+        } else if (d.done) {
+            state = 'done';
+            text = 'Confirmed';
+        }
         else if (d.done) { state = 'done'; text = 'Confirmed'; }
         else if (d.active) { state = 'current'; text = d.needsYou ? 'Needs your decision' : 'In progress'; }
         else if (failedRun && !failMarked) { state = 'failed'; text = 'Run failed'; failMarked = true; }
@@ -377,7 +412,11 @@ function pipelineStages(bug) {
 
 function pipelineHtml(bug) {
     const stages = pipelineStages(bug);
-    const glyph = s => s === 'done' ? icon('check') : s === 'failed' ? icon('x') : s === 'current' ? icon('loader') : '';
+    const glyph = s =>
+        s === 'done' ? icon('check') :
+        s === 'failed' ? icon('x') :
+        s === 'partial' ? icon('alert') :
+        s === 'current' ? icon('loader') : '';
     return `<div class="card pipeline">
         <h4>Repair pipeline</h4>
         <p>Stages appear as confirmed only when the backend data shows them.</p>
@@ -440,9 +479,19 @@ function render() {
         : bug.status === 'failed' ? '<div class="notice fail">Repair failed. Check the latest attempt, test results, and history below.</div>'
         : bug.status === 'merged' ? '<div class="notice success">This fix has been merged.</div>' : '';
 
-    const testsPassed = testResults.passed === true;
-    const testsFailed = testResults.passed === false;
-    const resultBadge = statusHtml(testsPassed ? 'passed' : testsFailed ? 'failed' : 'reported', testsPassed ? 'Passed' : testsFailed ? 'Failed' : 'Recorded');
+    const validationStatus = getValidationStatus(testResults);
+
+    const testsPassed = validationStatus === 'passed';
+    const testsFailed = validationStatus === 'failed';
+
+    const resultBadge =
+        validationStatus === 'passed'
+            ? statusHtml('passed', 'Passed')
+            : validationStatus === 'partial'
+                ? statusHtml('reported', 'Partially validated')
+                : validationStatus === 'failed'
+                    ? statusHtml('failed', 'Failed')
+                    : statusHtml('reported', 'Recorded');
     const hasResults = Object.keys(testResults).length > 0;
 
     const fold = (key, title, right, body, dflt) =>

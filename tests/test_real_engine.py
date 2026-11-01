@@ -89,7 +89,8 @@ def test_real_engine_pipeline(monkeypatch, tmp_path):
     assert result.test_results["passed"] is True
     assert result.root_cause == "Missing None guard."
     assert any(
-        item["path"] == "tests/test_regression.py"
+        item["path"].startswith("tests/test_autoresolve_")
+        and item["path"].endswith(".py")
         for item in result.changed_files
     )
 
@@ -611,32 +612,43 @@ def test_generated_test_cannot_overwrite_existing_file(tmp_path):
     (repo / "tests").mkdir(parents=True)
 
     existing = repo / "tests" / "test_security.py"
+    original_code = (
+        "def test_security():\n"
+        "    assert True\n"
+    )
+
     existing.write_text(
-        "def test_security():\n    assert True\n",
+        original_code,
         encoding="utf-8",
     )
 
     engine = object.__new__(RealFixEngine)
 
-    with pytest.raises(
-        RuntimeError,
-        match="already exists",
-    ):
-        engine._write_generated_test(
-            repo,
-            {
-                "path": "tests/test_security.py",
-                "code": (
-                    "def test_security():\n"
-                    "    assert False\n"
-                ),
-            },
-        )
-
-    assert existing.read_text(encoding="utf-8") == (
-        "def test_security():\n    assert True\n"
+    result = engine._write_generated_test(
+        repo,
+        {
+            "path": "tests/test_security.py",
+            "code": (
+                "def test_generated():\n"
+                "    assert True\n"
+            ),
+        },
     )
 
+    # The original file must remain unchanged.
+    assert existing.read_text(encoding="utf-8") == original_code
+
+    # AutoResolve must use a different filename.
+    assert result["path"] == (
+        "tests/test_security_autoresolve_1.py"
+    )
+
+    generated = repo / result["path"]
+
+    assert generated.is_file()
+    assert "def test_generated()" in generated.read_text(
+        encoding="utf-8"
+    )
 
 def test_generated_test_creates_new_file(tmp_path):
     from backend.orchestrator.real_engine import RealFixEngine
@@ -660,3 +672,67 @@ def test_generated_test_creates_new_file(tmp_path):
     ).read_text(encoding="utf-8") == (
         "def test_regression():\n    assert True\n"
     )
+
+def test_generated_test_uses_unique_filename(tmp_path):
+    repo = tmp_path / "repo"
+    tests = repo / "tests"
+    tests.mkdir(parents=True)
+
+    existing = tests / "test_regression.py"
+    existing.write_text(
+        "def test_existing():\n    assert True\n",
+        encoding="utf-8",
+    )
+
+    engine = object.__new__(RealFixEngine)
+
+    result = engine._write_generated_test(
+        repo,
+        {
+            "path": "tests/test_regression.py",
+            "code": "def test_new():\n    assert True\n",
+        },
+    )
+
+    assert result["path"] == (
+        "tests/test_regression_autoresolve_1.py"
+    )
+
+    assert existing.read_text(encoding="utf-8") == (
+        "def test_existing():\n    assert True\n"
+    )
+
+    generated = repo / result["path"]
+    assert generated.is_file()
+    assert "def test_new()" in generated.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_generated_test_uses_next_available_filename(tmp_path):
+    repo = tmp_path / "repo"
+    tests = repo / "tests"
+    tests.mkdir(parents=True)
+
+    (tests / "test_regression.py").write_text("original\n")
+    (tests / "test_regression_autoresolve_1.py").write_text(
+        "existing\n"
+    )
+
+    engine = object.__new__(RealFixEngine)
+
+    result = engine._write_generated_test(
+        repo,
+        {
+            "path": "tests/test_regression.py",
+            "code": "def test_new():\n    assert True\n",
+        },
+    )
+
+    assert result["path"] == (
+        "tests/test_regression_autoresolve_2.py"
+    )
+
+    assert (
+        tests / "test_regression_autoresolve_1.py"
+    ).read_text() == "existing\n"

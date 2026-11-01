@@ -16,6 +16,7 @@ from pathlib import Path
 from github import Github
 
 from ai_agent.engine import CodeFixEngine
+from backend.orchestrator.baseline_comparison import compare_failures
 from backend.orchestrator.docker_worker import run_pytest_in_worker
 from backend.orchestrator.engine import FixEngine, FixRequest, FixResult
 from backend.orchestrator.patch_safety import (
@@ -151,8 +152,10 @@ class RealFixEngine(FixEngine):
                 request.repo,
                 repo_path,
             )
+            baseline = self._run_baseline_tests(repo_path)
 
             class BugInput:
+                title = request.title
                 description = request.description
 
             feedback = "\n".join(request.feedback)
@@ -179,6 +182,7 @@ class RealFixEngine(FixEngine):
             test_file = self._write_generated_test(
                 repo_path,
                 generated_test,
+                unique_name=True,
             )
 
             regression_check = self._verify_regression_test_before_fix(
@@ -206,9 +210,17 @@ class RealFixEngine(FixEngine):
             test_results = self._validate_patch(
                 repo_path,
                 patch,
+                test_file["path"],
+                baseline,
             )
 
-            if not test_results["passed"]:
+            # A partially validated repair may be published only for
+            # explicit human review, never represented as a full pass.
+            partial_review = (
+                test_results.get("partial_review_ready") is True
+                and _publish_enabled()
+            )
+            if not test_results["passed"] and not partial_review:
                 return FixResult(
                     root_cause=analysis["root_cause"],
                     summary=(
@@ -225,11 +237,18 @@ class RealFixEngine(FixEngine):
                 )
 
             changed_files.append(test_file)
+            if partial_review:
+                test_results["review_ready"] = True
 
             branch = f"autoresolve/{request.bug_id.lower()}"
             summary = (
                 f"Attempt {request.iteration}: "
-                "automated repair proposed and validated."
+                + (
+                    "targeted repair passed; full suite still has "
+                    "pre-existing failures (partial validation)."
+                    if partial_review
+                    else "automated repair proposed and validated."
+                )
             )
 
             if _publish_enabled():
@@ -239,6 +258,7 @@ class RealFixEngine(FixEngine):
                     analysis["root_cause"],
                     patch,
                     test_file["path"],
+                    test_results,
                 )
                 summary += f" Pull request opened: {pr_url}"
 
@@ -279,75 +299,95 @@ class RealFixEngine(FixEngine):
         self,
         repo_path: Path,
         test_data: dict,
+        *,
+        unique_name: bool = False,
     ) -> dict:
+        """Write a new regression test without replacing existing files."""
         path = test_data.get("path")
         code = test_data.get("code")
 
-        if not path or not code:
-            raise RuntimeError(
+        if not isinstance(path, str) or not isinstance(code, str):
+            raise RuntimeError(  # noqa: TRY004
                 "AI generated an invalid regression test."
             )
 
-        relative_path = Path(path)
+        if not path.strip() or not code.strip():
+            raise RuntimeError("AI generated an empty regression test.")
 
-        if relative_path.is_absolute():
-            raise RuntimeError(
-                "Generated test path must be relative."
-            )
+        relative_path = Path(path.replace("\\", "/"))
 
-        if ".." in relative_path.parts:
-            raise RuntimeError(
-                "Generated test path escapes the repository."
-            )
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise RuntimeError("Generated test path escapes the repository.")
 
         if (
             not relative_path.parts
             or relative_path.parts[0] != "tests"
+            or relative_path.suffix != ".py"
         ):
             raise RuntimeError(
-                "Generated regression tests must live under tests/."
+                "Generated regression tests must be Python files under tests/."
             )
-
 
         repo_root = repo_path.resolve()
-        destination = (repo_root / relative_path).resolve()
 
-        if not destination.is_relative_to(repo_root):
+        # Reject unsafe existing directories and symlinks.
+        parent = repo_root
+        for component in relative_path.parts[:-1]:
+            parent = parent / component
+            if parent.is_symlink():
+                raise RuntimeError(
+                    "Generated test path escapes the repository."
+                )
+
+        parent.mkdir(parents=True, exist_ok=True)
+
+        if not parent.resolve().is_relative_to(repo_root):
             raise RuntimeError(
                 "Generated test path escapes the repository."
             )
 
-        destination.parent.mkdir(
-            parents=True,
-            exist_ok=True,
+        stem = relative_path.stem
+        suffix = relative_path.suffix
+
+        # Try the requested filename, then unused numbered alternatives.
+        for number in range(101):
+            # Live repairs use globally unique names across separate clones,
+            # bugs, attempts, repositories and concurrent workers.
+            name = (
+                f"test_autoresolve_{uuid.uuid4().hex}.py"
+                if unique_name
+                else (
+                    relative_path.name
+                    if number == 0
+                    else f"{stem}_autoresolve_{number}{suffix}"
+                )
+            )
+
+            candidate = parent / name
+
+            if candidate.is_symlink():
+                raise RuntimeError(
+                    "Generated test path escapes the repository."
+                )
+
+            try:
+                # Exclusive creation: never overwrite existing files.
+                with candidate.open("x", encoding="utf-8") as test_file:
+                    test_file.write(code)
+
+            except FileExistsError:
+                continue
+
+            actual_path = candidate.relative_to(repo_root).as_posix()
+
+            return {
+                "path": actual_path,
+                "diff": "Generated regression test:\n\n" + code,
+            }
+
+        raise RuntimeError(
+            "Could not allocate a unique regression test filename."
         )
-
-        # Re-resolve after creating directories to catch symlinks.
-        destination = destination.resolve()
-
-        if not destination.is_relative_to(repo_root):
-            raise RuntimeError(
-                "Generated test path escapes the repository."
-            )
-
-        # Never overwrite an existing repository test.
-        # Exclusive creation also prevents a simple check-then-write race.
-        try:
-            with destination.open("x", encoding="utf-8") as test_file:
-                test_file.write(code)
-        except FileExistsError as exc:
-            raise RuntimeError(
-                "Generated regression test already exists."
-            ) from exc
-
-
-        return {
-            "path": str(relative_path),
-            "diff": (
-                "Generated regression test:\n\n"
-                + code
-            ),
-        }
 
     def _verify_regression_test_before_fix(
         self,
@@ -435,10 +475,41 @@ class RealFixEngine(FixEngine):
             ),
         }
 
+    def _run_baseline_tests(self, repo_path: Path) -> dict:
+        """Record existing repository test failures before a repair."""
+
+        try:
+            result = run_pytest_in_worker(
+                repo_path,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "passed": False,
+                "available": False,
+                "error": "Baseline test run timed out.",
+            }
+        except (OSError, RuntimeError) as exc:
+            return {
+                "passed": False,
+                "available": False,
+                "error": f"Baseline worker failed: {exc}",
+            }
+
+        return {
+            "passed": result.returncode == 0,
+            "available": True,
+            "exit_code": result.returncode,
+            "stdout": result.stdout[-12000:],
+            "stderr": result.stderr[-12000:],
+        }
+
     def _validate_patch(
         self,
         repo_path: Path,
         patch: str,
+        regression_test_path: str | None = None,
+        baseline: dict | None = None,
     ) -> dict:
         try:
             validate_patch_target(repo_path, patch)
@@ -490,6 +561,31 @@ class RealFixEngine(FixEngine):
                 "stderr": apply_result.stderr[-12000:],
             }
 
+# Verify the generated regression test after applying the patch.
+        if regression_test_path is not None:
+            try:
+                focused_result = run_pytest_in_worker(
+                    repo_path,
+                    [regression_test_path],
+                    timeout=120,
+                )
+            except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+                return {
+                    "passed": False,
+                    "stage": "focused_regression",
+                    "error": f"Focused regression validation failed: {exc}",
+                }
+
+            if focused_result.returncode != 0:
+                return {
+                    "passed": False,
+                    "stage": "focused_regression",
+                    "exit_code": focused_result.returncode,
+                    "stdout": focused_result.stdout[-12000:],
+                    "stderr": focused_result.stderr[-12000:],
+                    "error": "Generated regression test failed after the patch.",
+                }
+
         try:
             test_result = run_pytest_in_worker(
                 repo_path,
@@ -520,10 +616,93 @@ class RealFixEngine(FixEngine):
                 "stderr": "",
             }
 
+        full_suite_passed = test_result.returncode == 0
+        comparison = (
+            compare_failures(
+                baseline,
+                {
+                    "exit_code": test_result.returncode,
+                    "stdout": test_result.stdout,
+                    "stderr": test_result.stderr,
+                },
+            )
+            if baseline is not None
+            else {
+                "comparison_available": False,
+                "resolved_failures": [],
+                "remaining_failures": [],
+                "new_failures": [],
+            }
+        )
+
+        if baseline is not None and not baseline.get("available", True):
+            return {
+                "passed": False,
+                "stage": "baseline_unavailable",
+                "exit_code": test_result.returncode,
+                "error": baseline.get(
+                    "error",
+                    "Repository baseline could not be established.",
+                ),
+                "stdout": test_result.stdout[-12000:],
+                "stderr": test_result.stderr[-12000:],
+            }
+
+        baseline_failed = (
+            baseline is not None
+            and baseline.get("available", True)
+            and baseline.get("passed") is False
+        )
+
+        # Partial review is deliberately narrow. It cannot certify the
+        # full suite: collection may stop before discovering every error.
+        changed_paths = self._patch_to_changed_files(patch)
+        changed_source_paths = {item["path"] for item in changed_paths}
+        resolved = set(comparison.get("resolved_failures", []))
+        remaining = set(comparison.get("remaining_failures", []))
+        partial_review_ready = (
+            regression_test_path is not None
+            and baseline is not None
+            and baseline.get("available") is True
+            and baseline.get("exit_code") == 2
+            and test_result.returncode == 2
+            and comparison.get("comparison_available") is True
+            and not comparison.get("new_failures")
+            and bool(remaining)
+            and bool(changed_source_paths & resolved)
+            and len(changed_source_paths) == 1
+        )
+
         return {
-            "passed": test_result.returncode == 0,
+            "passed": full_suite_passed,
+            "partial_review_ready": partial_review_ready,
+            "validation_level": (
+                "full" if full_suite_passed
+                else "partial" if partial_review_ready
+                else "failed"
+            ),
             "exit_code": test_result.returncode,
-            "stage": "tests",
+            "stage": (
+                "baseline_blocked"
+                if baseline_failed and not full_suite_passed
+                else "tests"
+            ),
+            "baseline_passed": (
+                baseline.get("passed")
+                if baseline is not None
+                else None
+            ),
+            "focused_regression_passed": (
+                True if regression_test_path is not None else None
+            ),
+            "failure_comparison": comparison,
+            "error": (
+                "The full repository suite still fails. "
+                "Pre-existing failures were present in the baseline; "
+                "additional failures have not been ruled out."
+                if baseline_failed and not full_suite_passed
+                else None
+            ),
             "stdout": test_result.stdout[-12000:],
             "stderr": test_result.stderr[-12000:],
         }
@@ -548,6 +727,7 @@ class RealFixEngine(FixEngine):
         root_cause: str,
         patch: str,
         regression_test_path: str,
+        test_results: dict | None = None,
     ) -> tuple[str, str]:
         """Commit the validated change, push a branch and open a pull request.
 
@@ -610,13 +790,36 @@ class RealFixEngine(FixEngine):
             askpass.unlink(missing_ok=True)
 
         gh_repo = Github(self.github_token).get_repo(slug)
+        partial = bool(
+            test_results and test_results.get("review_ready") is True
+        )
+        comparison = (test_results or {}).get("failure_comparison") or {}
+        if partial:
+            validation_note = (
+                "**PARTIAL VALIDATION — FULL TEST SUITE FAILED.**\n"
+                "The generated regression failed before the patch and "
+                "passed afterward. The repository still has pre-existing "
+                "pytest collection failures. Other failures may be hidden "
+                "by interrupted collection. Review carefully before merging.\n\n"
+                f"Remaining observed failures: "
+                f"{', '.join(comparison.get('remaining_failures', []))}\n"
+            )
+        else:
+            validation_note = (
+                "Generated regression failed before the patch; the full "
+                "test suite passed afterward.\n"
+            )
         pull = gh_repo.create_pull(
-            title=f"AutoResolve {request.bug_id}: {request.title}"[:250],
+            title=(
+                f"[PARTIAL] AutoResolve {request.bug_id}: {request.title}"
+                if partial
+                else f"AutoResolve {request.bug_id}: {request.title}"
+            )[:250],
             body=(
                 f"Automated fix proposed by AutoResolve for {request.bug_id}.\n\n"
                 f"**Root cause:** {root_cause}\n\n"
-                "The regression test failed before the fix and the full test "
-                "suite passed after it. A human must approve before merge."
+                + validation_note
+                + "\nA human must review and explicitly approve before merge."
             ),
             head=branch,
             base=gh_repo.default_branch,
@@ -648,6 +851,15 @@ class RealFixEngine(FixEngine):
             raise RuntimeError(f"No open pull request found for branch '{branch}'.")
 
         pull = pulls[0]
+        # GitHub may report null while it computes mergeability. Only an
+        # explicit False is a confirmed conflict; never overwrite either side.
+        if pull.mergeable is False:
+            raise RuntimeError(
+                "PR has merge conflicts with the current default branch. "
+                "Do not retry approval on this unchanged PR; regenerate "
+                "and revalidate the fix from the latest repository state. "
+                f"PR: {pull.html_url}"
+            )
         outcome = pull.merge(merge_method="squash")
         if not outcome.merged:
             raise RuntimeError(f"GitHub refused the merge: {outcome.message}")

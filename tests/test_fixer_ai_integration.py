@@ -13,7 +13,7 @@ class FakeAIAdapter:
         self.response = response
         self.calls = []
 
-    def generate_text(self, prompt, task, max_tokens=2048):
+    def generate_text(self, prompt, task, max_tokens=65536):
         self.calls.append(
             {
                 "prompt": prompt,
@@ -81,7 +81,7 @@ def test_fixer_uses_remote_adapter(tmp_path):
 
     assert len(adapter.calls) == 1
     assert adapter.calls[0]["task"] == "bug_fix"
-    assert adapter.calls[0]["max_tokens"] == 2048
+    assert adapter.calls[0]["max_tokens"] == 65536
 
     # Generating a patch should not modify the original file.
     assert "if user is None" not in (

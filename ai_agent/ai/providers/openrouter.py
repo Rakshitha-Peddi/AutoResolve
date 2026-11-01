@@ -47,7 +47,10 @@ class OpenRouterProvider(AIProvider):
                 for message in request.messages
             ],
             "temperature": request.temperature,
-            "max_tokens": request.max_tokens,
+            "max_tokens": max(request.max_tokens, 65536),
+            "reasoning": {
+                "effort": "low"
+            },
         }
 
         try:

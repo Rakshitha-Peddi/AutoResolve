@@ -2,6 +2,7 @@
 """Retrieve bounded Python source code from a repository."""
 
 import os
+import re
 from pathlib import Path
 
 from .source_safety import contains_sensitive_source
@@ -51,6 +52,14 @@ class RepositoryRetriever:
 
         if not root.is_dir():
             raise ValueError("Repository path must be a directory.")
+        referenced_files = {
+            match.lower()
+            for match in re.findall(
+                r"(?<![\w/.-])(?:[\w.-]+/)*[\w.-]+\.py\b",
+                query,
+                flags=re.IGNORECASE,
+            )
+        }
 
         terms = [
             word.lower()
@@ -128,6 +137,15 @@ class RepositoryRetriever:
                     + (1 if term in source_text else 0)
                     for term in terms
                 )
+
+                for referenced_file in referenced_files:
+                    if relative_path.lower() == referenced_file:
+                        score += 1000
+                    elif (
+                        "/" not in referenced_file
+                        and path.name.lower() == referenced_file
+                    ):
+                        score += 500
 
                 if score:
                     matches.append(

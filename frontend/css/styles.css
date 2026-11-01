@@ -358,3 +358,13 @@ dialog[open] { animation: pop .22s ease-out; }
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+.step.partial .step-dot {
+    color: #9a6700;
+    background: #fff4d6;
+    border-color: #e8cb83;
+}
+
+.step.partial .step-state {
+    color: #9a6700;
+    font-weight: 600;
+}
