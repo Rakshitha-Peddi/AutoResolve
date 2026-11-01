@@ -1,8 +1,7 @@
 import pytest
 
-from backend.database.session import SessionLocal
 from backend.orchestrator import sheets, workflow
-from backend.orchestrator.engine import FixEngine, StubEngine, set_engine
+from backend.orchestrator.engine import StubEngine, set_engine
 
 BUG = {"title": "Login fails on empty password", "description": "Crashes with a 500.",
        "repo": "acme/web", "reporter": "tina"}
@@ -215,22 +214,39 @@ def test_sheets_sync_off_by_default(client):
 
 
 def test_sheets_sync_imports_each_row_once(client, monkeypatch):
-    rows = [["Title", "Description", "Repo", "Reporter"],
-            ["Crash on save", "Stack trace attached", "acme/app", "sam"],
-            ["", "no title, skipped", "acme/app", "sam"],
-            ["Typo in footer", "", "", ""]]
+    rows = [
+        ["Title", "Description", "Repo", "Reporter", "Status", "Error"],
+        ["Crash on save", "Stack trace attached", "acme/app", "sam", "Pending", ""],
+        ["", "no title, skipped", "acme/app", "sam", "Pending", ""],
+        ["Typo in footer", "", "", "", "Pending", ""],
+        ["Already fixed", "Resolved", "acme/app", "sam", "Fixed", ""],
+        ["Already failed", "Broken", "acme/app", "sam", "Failed", "Previous error"],
+    ]
+
     monkeypatch.setattr(sheets, "GOOGLE_SHEET_ID", "sheet123")
     monkeypatch.setattr(sheets, "_fetch_rows", lambda: rows)
 
     r = client.post("/api/sheets/sync")
-    assert r.status_code == 200 and r.json()["count"] == 2
-    bugs = {b["title"]: client.get(f"/api/bugs/{b['id']}").json() for b in client.get("/api/bugs").json()}
-    assert bugs["Crash on save"]["reporter"] == "sam" and bugs["Crash on save"]["source"] == "sheet"
-    assert bugs["Typo in footer"]["repo"] == "default"       # blank cells get defaults
+    assert r.status_code == 200
+    assert r.json()["count"] == 2
+
+    bugs = {
+        b["title"]: client.get(f"/api/bugs/{b['id']}").json()
+        for b in client.get("/api/bugs").json()
+    }
+
+    assert bugs["Crash on save"]["reporter"] == "sam"
+    assert bugs["Crash on save"]["source"] == "sheet"
+    assert bugs["Typo in footer"]["repo"] == "default"
+
+    assert "Already fixed" not in bugs
+    assert "Already failed" not in bugs
+
     assert all(b["status"] == "awaiting_review" for b in bugs.values())
 
-    assert client.post("/api/sheets/sync").json()["count"] == 0   # nothing new the second time
-    rows.append(["New one", "d", "r", "t"])
+    assert client.post("/api/sheets/sync").json()["count"] == 0
+
+    rows.append(["New one", "d", "r", "t", "Pending", ""])
     assert client.post("/api/sheets/sync").json()["count"] == 1
 
 

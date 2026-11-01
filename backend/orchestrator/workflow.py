@@ -27,6 +27,18 @@ from backend.orchestrator.repair_feedback import build_repair_feedback
 
 log = logging.getLogger(__name__)
 
+
+def _sync_sheet_after_transition(bug: Bug, error: str = "") -> None:
+    """Write result back to source sheet without breaking DB lifecycle.
+
+    Pending stays Pending during analysis/review/retries; Fixed requires merge.
+    """
+    if bug.source != "sheet":
+        return
+    from backend.orchestrator.sheets import record_sheet_result
+
+    record_sheet_result(bug, error)
+
 class BugNotFound(Exception):
     """Requested bug does not exist."""
 
@@ -176,6 +188,7 @@ def _run_single_iteration(bug_id: int) -> Bug:
             )
             db.commit()
             db.refresh(bug)
+            _sync_sheet_after_transition(bug, "Maximum automatic repair iterations reached.")
             return bug
 
         bug.iteration += 1
@@ -265,7 +278,12 @@ def _run_single_iteration(bug_id: int) -> Bug:
 
             db.commit()
             db.refresh(bug)
-
+            if result.test_results.get("passed") is not True:
+                results = bug.test_results or {}
+                reason = (results.get("error") or results.get("stderr") or
+                          results.get("stdout") or
+                          "Repair validation failed; review AutoResolve logs.")
+                _sync_sheet_after_transition(bug, str(reason)[-1500:])
             return bug
 
         except Exception as exc:
@@ -342,7 +360,7 @@ def _run_single_iteration(bug_id: int) -> Bug:
 
             db.commit()
             db.refresh(bug)
-
+            _sync_sheet_after_transition(bug, error_message[-1500:])
             return bug
 
 def run_iteration(bug_id: int) -> Bug:
@@ -378,7 +396,7 @@ def approve(db: Session, bug: Bug) -> Bug:
             bug.branch,
         )
 
-    except Exception:
+    except Exception as exc:
         log.exception("Merge failed for BUG-%s", bug.public_id)
 
         _add_history(
@@ -389,6 +407,7 @@ def approve(db: Session, bug: Bug) -> Bug:
 
         db.commit()
         db.refresh(bug)
+        _sync_sheet_after_transition(bug, f"GitHub merge failed: {exc}"[-1500:])
 
         raise MergeFailed(
             "Merge failed. Check server logs for details."
@@ -418,6 +437,7 @@ def approve(db: Session, bug: Bug) -> Bug:
 
     db.commit()
     db.refresh(bug)
+    _sync_sheet_after_transition(bug)
 
     return bug
 
@@ -466,7 +486,7 @@ def request_changes(
 
         db.commit()
         db.refresh(bug)
-
+        _sync_sheet_after_transition(bug, "Maximum repair iterations reached after developer feedback.")
         return bug
 
     bug.status = FIXING
