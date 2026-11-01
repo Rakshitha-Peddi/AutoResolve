@@ -193,10 +193,17 @@ class AIManager:
                 if not self.fallback_enabled:
                     raise
 
+        if last_error is not None:
+            raise AINoProviderError(
+                "No AI provider completed the request successfully. "
+                f"Last failure: {last_error.__class__.__name__}: "
+                f"{last_error}"
+            ) from last_error
+
         raise AINoProviderError(
-            "All eligible AI providers are unavailable "
-            "or have exhausted their request budgets."
-        ) from last_error
+            "No eligible AI provider is currently available. "
+            "Check provider configuration, cooldowns, and request budgets."
+        )
 
 
     def available_providers(self) -> list[str]:

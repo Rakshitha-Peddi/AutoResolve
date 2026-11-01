@@ -766,8 +766,15 @@ class RealFixEngine(FixEngine):
                 check=False,
             )
             if result.returncode != 0:
+                error = result.stderr.strip()
+
+                # Never expose the GitHub token in logs or error responses.
+                if self.github_token:
+                    error = error.replace(self.github_token, "[REDACTED]")
+
                 raise RuntimeError(
-                    f"git {args[0]} failed: {result.stderr.strip()[-500:]}"
+                    f"git {args[0]} failed (exit {result.returncode}): "
+                    f"{error[:4000]}"
                 )
 
         try:
