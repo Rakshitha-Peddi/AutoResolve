@@ -1,1 +1,182 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AutoResolve</title><link rel="stylesheet" href="/css/styles.css"></head><body><header><h1>AutoResolve</h1><p>Human-in-the-loop AI bug resolution</p></header><main><section class="metrics" id="metrics"></section><section class="grid"><div class="card"><h2>Report Bug</h2><input id="title" placeholder="Bug title"><textarea id="description" placeholder="Describe the defect"></textarea><input id="repo" placeholder="GitHub repo, e.g. owner/repo or https://github.com/owner/repo"><input id="reporter" value="tester"><button onclick="createBug()">Create Bug</button></div><div class="card"><h2>Bug Queue</h2><div id="bugs"></div></div></section><section class="card"><h2>Review Console</h2><div id="detail">Select a bug.</div></section></main><script src="/js/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#E3FDFD">
+  <meta name="description" content="AutoResolve — bugs fixed by AI, approved by you.">
+  <title>AutoResolve</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css?v=20261101">
+  <script src="/js/app.js?v=20261101" defer></script>
+</head>
+<body>
+
+<nav class="topnav" aria-label="Main">
+  <div class="topnav-inner">
+    <a href="#overview" class="brand" aria-label="AutoResolve home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.5 6H13a3 3 0 0 1 3 3v6.5"/></svg>
+      </span>
+      <span>AutoResolve</span>
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="#overview" class="nav-link active" data-section="overview">Overview</a>
+      <a href="#queue" class="nav-link" data-section="queue">Bugs <em id="sidebar-count" class="nav-count" hidden>0</em></a>
+      <a href="#review" class="nav-link" data-section="review">Reviews</a>
+    </div>
+    <div class="nav-tools">
+      <button class="icon-button mobile-menu" id="menu-toggle" aria-label="Toggle menu" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16M4 16h16"/></svg>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<main>
+
+  <!-- Hero -->
+  <header class="hero" id="overview">
+    <div class="orb orb-a" aria-hidden="true"></div>
+    <div class="orb orb-b" aria-hidden="true"></div>
+    <p class="eyebrow">Your AI repair workspace</p>
+    <h1>A simpler way to resolve bugs.</h1>
+    <p class="hero-sub">From Google Sheets to verified code fixes. AutoResolve handles the workflow, while you stay in control.</p>
+    <div class="hero-actions">
+      <a href="#queue" class="button button-primary">View imported bugs</a>
+      <button class="link-arrow" id="new-report-button" type="button">Report manually</button>
+    </div>
+  </header>
+
+  <!-- Google Sheets intake -->
+  <section class="section" id="intake" aria-labelledby="intake-heading">
+    <div class="intake">
+      <span class="sheets-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M4 10h16M4 15h16M10 4v16"/></svg>
+      </span>
+      <h2 id="intake-heading">Your bugs, automatically imported.</h2>
+      <p class="intake-sub">Report in Google Sheets. AutoResolve handles the rest.</p>
+      <ol class="intake-flow" aria-label="How intake works">
+        <li>Report</li>
+        <li class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></li>
+        <li>AI repair</li>
+        <li class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></li>
+        <li>Developer review</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- Overview metrics -->
+  <section class="section" aria-labelledby="overview-heading">
+    <div class="section-head">
+      <h2 id="overview-heading">Bug overview</h2>
+    </div>
+    <div class="metrics" id="metrics">
+      <div class="metric"><strong class="metric-value">—</strong><span class="metric-label">Total</span></div>
+      <div class="metric"><strong class="metric-value">—</strong><span class="metric-label">Processing</span></div>
+      <div class="metric"><strong class="metric-value">—</strong><span class="metric-label">In review</span></div>
+      <div class="metric"><strong class="metric-value">—</strong><span class="metric-label">Merged</span></div>
+    </div>
+    <p class="connection-state" id="connection-state" role="status"><i aria-hidden="true"></i><span>Metrics will populate from the backend.</span></p>
+  </section>
+
+  <!-- Queue -->
+  <section class="section" id="queue" aria-labelledby="queue-heading">
+    <div class="section-head">
+      <h2 id="queue-heading">Automated Repair Queue <span id="queue-count" class="count-pill">0</span></h2>
+      <p>Follow every issue from intake to developer approval.</p>
+    </div>
+    <div class="card list-card">
+      <div class="queue-toolbar">
+        <label class="search-field">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="bug-search" type="search" placeholder="Search by title, ID or repository" aria-label="Search bugs" autocomplete="off">
+        </label>
+        <select id="status-filter" aria-label="Filter by status">
+          <option value="all">All statuses</option>
+          <option value="reported">Reported</option>
+          <option value="fixing">Fixing</option>
+          <option value="awaiting_review">Awaiting review</option>
+          <option value="failed">Failed</option>
+          <option value="merged">Merged</option>
+        </select>
+        <select id="source-filter" aria-label="Filter by source" hidden>
+          <option value="all">All sources</option>
+        </select>
+        <button class="text-button" id="queue-refresh-button" type="button">Refresh</button>
+      </div>
+      <div id="bugs" class="bug-list" aria-live="polite"><div class="empty-state">Loading…</div></div>
+      <div class="queue-footer"><span id="queue-footer-count">0 bugs</span></div>
+    </div>
+  </section>
+
+  <!-- Review -->
+  <section class="section" id="review" aria-labelledby="review-heading">
+    <div class="section-head">
+      <h2 id="review-heading">Review</h2>
+      <p>Inspect the fix, the test results and the history, then decide.</p>
+    </div>
+    <div id="detail" aria-live="polite">
+      <div class="card review-empty">
+        <h3>Nothing selected</h3>
+        <p>Choose a bug from the queue to see its proposed fix.</p>
+        <a class="link-arrow" href="#queue">Go to bugs ›</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Manual report -->
+  <section class="section narrow" id="report" aria-labelledby="report-heading">
+    <div class="section-head">
+      <h2 id="report-heading">Report a Bug Manually</h2>
+      <p>Need to submit an issue outside the Google Sheets workflow? Create a report here.</p>
+    </div>
+    <form id="report-form" class="card form" novalidate>
+      <div class="field">
+        <label for="title">Title</label>
+        <input id="title" name="title" placeholder="TypeError in payment.py" required maxlength="300" aria-describedby="title-err">
+        <small class="field-error" id="title-err" role="alert"></small>
+      </div>
+      <div class="field">
+        <label for="description">Description</label>
+        <textarea id="description" name="description" placeholder="What happened, what you expected, and any error messages." required rows="5" aria-describedby="description-err"></textarea>
+        <small class="field-error" id="description-err" role="alert"></small>
+      </div>
+      <div class="field">
+        <label for="repo">GitHub repository</label>
+        <input id="repo" name="repository" placeholder="owner/repository or GitHub URL" required aria-describedby="repo-err">
+        <small class="field-error" id="repo-err" role="alert"></small>
+      </div>
+      <div class="field">
+        <label for="reporter">Reported by</label>
+        <input id="reporter" name="reporter" value="tester">
+      </div>
+      <button class="button button-primary button-block" type="submit" id="create-button">Submit report</button>
+      <p class="form-note">A developer approves every fix before it merges.</p>
+    </form>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>AI providers, in fallback order: <strong>Gemini → Groq → OpenRouter</strong>. Live provider status isn’t reported by the backend.</p>
+  <p>AutoResolve · AI code repair, approved by people.</p>
+</footer>
+
+<dialog id="confirm-dialog" aria-labelledby="confirm-title">
+  <form method="dialog" class="dialog-body">
+    <h3 id="confirm-title">Approve and merge this fix?</h3>
+    <p>This asks the backend to <strong>merge the GitHub pull request into the target repository</strong>. It does not just save a comment.</p>
+    <p class="dialog-bug" id="confirm-bug"></p>
+    <div class="dialog-actions">
+      <button class="button button-secondary" value="cancel" id="confirm-cancel">Cancel</button>
+      <button class="button button-primary" value="confirm" id="confirm-ok">Approve and merge</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast-region" class="toast-region" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -32,8 +32,7 @@ class GitHubClient:
         owner = parts[0]
         repo = parts[1]
 
-        if repo.endswith(".git"):
-            repo = repo[:-4]
+        repo = repo.removesuffix(".git")
 
         return f"{owner}/{repo}"
 

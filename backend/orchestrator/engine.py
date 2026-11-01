@@ -11,7 +11,6 @@ Until then ``StubEngine`` returns placeholder results so the whole flow works.
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 class FixEngineError(Exception):
@@ -35,7 +34,7 @@ class FixResult:
     plan: list[str]
     changed_files: list[dict]       # [{"path": "src/x.py", "diff": "<unified diff>"}]
     test_results: dict              # {"passed": bool, "total": int, "failed": int, "tests": [...]}
-    branch: Optional[str] = None    # branch or pull request the merge step will use
+    branch: str | None = None    # branch or pull request the merge step will use
 
 
 class FixEngine(ABC):
@@ -44,7 +43,7 @@ class FixEngine(ABC):
         """Analyse the bug and return a validated fix. May take minutes."""
 
     @abstractmethod
-    def merge(self, repo: str, branch: Optional[str]) -> Optional[str]:
+    def merge(self, repo: str, branch: str | None) -> str | None:
         """Merge an approved change. Return a short reference (commit or PR URL) if there is one."""
 
 
@@ -64,7 +63,7 @@ class StubEngine(FixEngine):
             plan.append(f"Developer constraint {i}: {constraint}")
             added.append(f"+    # constraint {i}: {constraint[:60]}")
         diff = "\n".join([
-            f"--- a/{path}", f"+++ b/{path}", "@@ -10,3 +10,{} @@".format(3 + len(added)),
+            f"--- a/{path}", f"+++ b/{path}", f"@@ -10,3 +10,{3 + len(added)} @@",
             " def handle(value):", *added, "     return value",
         ])
         tests = [
@@ -84,7 +83,7 @@ class StubEngine(FixEngine):
             branch=f"autoresolve/{request.bug_id.lower()}",
         )
 
-    def merge(self, repo: str, branch: Optional[str]) -> Optional[str]:
+    def merge(self, repo: str, branch: str | None) -> str | None:
         return f"stub-merge:{branch}"
 
 

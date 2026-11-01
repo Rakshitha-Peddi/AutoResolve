@@ -15,6 +15,7 @@ class PatchApplier:
             input=patch,
             capture_output=True,
             text=True,
+            check=False,
         )
 
         if result.returncode != 0:
@@ -29,6 +30,7 @@ class PatchApplier:
             input=patch,
             capture_output=True,
             text=True,
+            check=False,
         )
 
         if result.returncode != 0:

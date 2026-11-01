@@ -1,4 +1,5 @@
 import os
+from typing import ClassVar
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -7,7 +8,7 @@ from google.oauth2.service_account import Credentials
 class GoogleSheetsClient:
     """Google Sheets client for AutoResolve."""
 
-    SCOPES = [
+    SCOPES: ClassVar[list[str]] = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
