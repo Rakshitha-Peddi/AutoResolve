@@ -152,7 +152,7 @@ class RealFixEngine(FixEngine):
                 request.repo,
                 repo_path,
             )
-            baseline = self._run_baseline_tests(repo_path)
+
 
             class BugInput:
                 title = request.title
@@ -207,11 +207,10 @@ class RealFixEngine(FixEngine):
                     ),
                 )
 
-            test_results = self._validate_patch(
+            test_results = self._validate_targeted_patch(
                 repo_path,
                 patch,
                 test_file["path"],
-                baseline,
             )
 
             # A partially validated repair may be published only for
@@ -504,6 +503,7 @@ class RealFixEngine(FixEngine):
             "stderr": result.stderr[-12000:],
         }
 
+
     def _validate_patch(
         self,
         repo_path: Path,
@@ -705,6 +705,95 @@ class RealFixEngine(FixEngine):
             ),
             "stdout": test_result.stdout[-12000:],
             "stderr": test_result.stderr[-12000:],
+        }
+
+
+    def _validate_targeted_patch(
+        self,
+        repo_path: Path,
+        patch: str,
+        regression_test_path: str,
+    ) -> dict:
+        """Validate a patch against its generated regression test only."""
+
+        try:
+            validate_patch_target(repo_path, patch)
+        except (UnsafePatchError, OSError) as exc:
+            return {
+                "passed": False,
+                "stage": "patch",
+                "error": str(exc),
+            }
+
+        if not regression_test_path:
+            return {
+                "passed": False,
+                "stage": "focused_regression",
+                "error": "A focused regression test is required.",
+            }
+
+        try:
+            applied = subprocess.run(
+                [
+                    "git",
+                    "apply",
+                    "--recount",
+                    "--whitespace=nowarn",
+                    "-",
+                ],
+                input=patch,
+                text=True,
+                cwd=repo_path,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {
+                "passed": False,
+                "stage": "patch",
+                "error": str(exc),
+            }
+
+        if applied.returncode != 0:
+            return {
+                "passed": False,
+                "stage": "patch",
+                "exit_code": applied.returncode,
+                "stdout": applied.stdout[-12000:],
+                "stderr": applied.stderr[-12000:],
+                "error": "Patch application failed.",
+            }
+
+        try:
+            result = run_pytest_in_worker(
+                repo_path,
+                [regression_test_path],
+                timeout=120,
+            )
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            return {
+                "passed": False,
+                "stage": "focused_regression",
+                "error": str(exc),
+            }
+
+        passed = result.returncode == 0
+
+        return {
+            "passed": passed,
+            "partial_review_ready": False,
+            "validation_level": "targeted" if passed else "failed",
+            "stage": "focused_regression",
+            "focused_regression_passed": passed,
+            "full_suite_passed": None,
+            "exit_code": result.returncode,
+            "stdout": result.stdout[-12000:],
+            "stderr": result.stderr[-12000:],
+            "error": (
+                None if passed
+                else "Focused regression test failed after patch."
+            ),
         }
 
     # ------------------------------------------------------------------
